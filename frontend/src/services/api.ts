@@ -2,10 +2,6 @@
  * REST API client for backend communication.
  */
 
-import type {
-  ConversationThread,
-  ResearchQuery
-} from "../types/message";
 import { SearchSource } from "../types/message";
 import type { AgentState } from "../types/agent";
 import type { SearchResult, SynthesizedAnswer } from "../types/search";
@@ -58,11 +54,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
 /**
  * Request body types.
  */
-export interface CreateThreadRequest {
-  session_id: string;
-}
-
-export interface CreateQueryRequest {
+export interface ResearchRequest {
   content: string;
   search_sources: SearchSource[];
 }
@@ -70,20 +62,12 @@ export interface CreateQueryRequest {
 /**
  * Response types.
  */
-export interface ThreadDetailResponse {
-  id: string;
-  session_id: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  queries: ResearchQuery[];
-  answers: SynthesizedAnswer[];
-}
-
-export interface QueryDetailResponse extends ResearchQuery {
-  agent_states: AgentState[];
-  search_results: SearchResult[];
+export interface ResearchResponse {
+  content: string;
+  answer: SynthesizedAnswer;
   research_plan: Record<string, unknown> | null;
+  search_results: SearchResult[];
+  agent_states: AgentState[];
 }
 
 /**
@@ -140,68 +124,25 @@ class ApiClient {
   }
   
   // ============================================================================
-  // Thread Management
+  // Research
   // ============================================================================
   
   /**
-   * Create a new conversation thread.
+   * Submit a research query and get complete results synchronously.
+   * This will wait for the entire workflow to complete.
    */
-  async createThread(sessionId: string): Promise<ConversationThread> {
-    return this.request<ConversationThread>("/threads", {
-      method: "POST",
-      body: JSON.stringify({ session_id: sessionId })
-    });
-  }
-  
-  /**
-   * Get thread details with queries and answers.
-   */
-  async getThread(threadId: string): Promise<ThreadDetailResponse> {
-    return this.request<ThreadDetailResponse>(`/threads/${threadId}`);
-  }
-  
-  /**
-   * Close a thread.
-   */
-  async closeThread(threadId: string): Promise<void> {
-    return this.request<void>(`/threads/${threadId}`, {
-      method: "DELETE"
-    });
-  }
-  
-  // ============================================================================
-  // Query Management
-  // ============================================================================
-  
-  /**
-   * Submit a new research query.
-   */
-  async submitQuery(
-    threadId: string,
+  async submitResearch(
     content: string,
     searchSources: SearchSource[]
-  ): Promise<ResearchQuery> {
-    return this.request<ResearchQuery>(`/threads/${threadId}/queries`, {
+  ): Promise<ResearchResponse> {
+    // Set a longer timeout for research (5 minutes)
+    return this.request<ResearchResponse>("/research", {
       method: "POST",
       body: JSON.stringify({
         content,
         search_sources: searchSources
       })
-    });
-  }
-  
-  /**
-   * Get query status and details.
-   */
-  async getQuery(queryId: string): Promise<QueryDetailResponse> {
-    return this.request<QueryDetailResponse>(`/queries/${queryId}`);
-  }
-  
-  /**
-   * Get synthesized answer for a query.
-   */
-  async getAnswer(queryId: string): Promise<SynthesizedAnswer> {
-    return this.request<SynthesizedAnswer>(`/queries/${queryId}/answer`);
+    }, 300000); // 5 minutes
   }
   
   // ============================================================================

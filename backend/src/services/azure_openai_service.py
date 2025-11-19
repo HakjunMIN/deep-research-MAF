@@ -122,17 +122,24 @@ class AzureOpenAIService:
         keywords = [kw.strip() for kw in text.split(",") if kw.strip()]
         return keywords
     
-    async def analyze_relevance(self, query: str, snippet: str) -> float:
+    async def analyze_relevance(self, query: str, snippet: str, title: Optional[str] = None) -> float:
         """
         Analyze the relevance of a search result snippet to a query.
         
         Args:
             query: Research question
             snippet: Search result snippet
+            title: Optional title of the search result
             
         Returns:
             Relevance score (0.0 - 1.0)
         """
+        content_parts = [f"Query: {query}"]
+        if title:
+            content_parts.append(f"Title: {title}")
+        content_parts.append(f"Snippet: {snippet}")
+        content_parts.append("How relevant is this result to the query? (0.0 - 1.0)")
+        
         messages = [
             {
                 "role": "system",
@@ -140,7 +147,7 @@ class AzureOpenAIService:
             },
             {
                 "role": "user",
-                "content": f"Query: {query}\n\nSnippet: {snippet}\n\nHow relevant is this snippet to the query? (0.0 - 1.0)"
+                "content": "\n\n".join(content_parts)
             }
         ]
         

@@ -17,22 +17,6 @@ class QueryStatus(str, Enum):
     FAILED = "failed"
 
 
-class ThreadStatus(str, Enum):
-    """Status of a conversation thread."""
-    ACTIVE = "active"
-    IDLE = "idle"
-    CLOSED = "closed"
-
-
-class AgentStatus(str, Enum):
-    """Status of an agent."""
-    IDLE = "idle"
-    THINKING = "thinking"
-    WORKING = "working"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
 class SearchSource(str, Enum):
     """Available search sources."""
     GOOGLE = "google"
@@ -65,8 +49,6 @@ class BaseEntity(BaseModel):
 __all__ = [
     "BaseEntity",
     "QueryStatus",
-    "ThreadStatus",
-    "AgentStatus",
     "SearchSource",
     "AgentId",
     "UUID",

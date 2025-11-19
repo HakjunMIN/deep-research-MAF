@@ -4,7 +4,7 @@ from typing import List
 
 from pydantic import Field, field_validator
 
-from . import BaseEntity, QueryStatus, SearchSource, UUID
+from . import BaseEntity, QueryStatus, SearchSource
 
 
 class ResearchQuery(BaseEntity):
@@ -17,7 +17,6 @@ class ResearchQuery(BaseEntity):
     - status: Defaults to 'pending'
     """
     
-    thread_id: UUID = Field(..., description="ID of the conversation thread")
     content: str = Field(..., min_length=1, max_length=2000, description="User's question text")
     search_sources: List[SearchSource] = Field(
         ...,

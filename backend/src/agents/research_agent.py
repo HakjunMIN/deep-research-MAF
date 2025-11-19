@@ -8,9 +8,10 @@ This agent:
 4. Analyzes relevance of results
 """
 
+import logging
 from typing import Any, Dict, List
 
-from agent_framework import AgentContext
+from agent_framework import AgentRunContext
 
 from .base import BaseCustomAgent
 from ..models import AgentId, SearchSource
@@ -19,6 +20,8 @@ from ..models.search_result import SearchResult
 from ..services.azure_openai_service import AzureOpenAIService
 from ..services.google_search import GoogleSearchService
 from ..services.arxiv_search import ArxivSearchService
+
+logger = logging.getLogger(__name__)
 
 
 class ResearchAgent(BaseCustomAgent):
@@ -37,14 +40,14 @@ class ResearchAgent(BaseCustomAgent):
         """Initialize Research Agent."""
         super().__init__(
             agent_id=AgentId.RESEARCH,
-            name="Research Agent",
-            description="Executes searches and collects relevant information"
+            agent_name="Research Agent",
+            agent_description="Executes searches and collects relevant information"
         )
         self.google_service = GoogleSearchService()
         self.arxiv_service = ArxivSearchService()
         self.openai_service = AzureOpenAIService()
     
-    async def execute(self, context: AgentContext) -> Dict[str, Any]:
+    async def execute(self, context: AgentRunContext) -> Dict[str, Any]:
         """
         Execute research plan and collect search results.
         
@@ -54,53 +57,59 @@ class ResearchAgent(BaseCustomAgent):
         Returns:
             Dict with search_results and statistics
         """
-        # Get research plan from context
-        research_plan: ResearchPlan = self.get_shared_state(context, "research_plan")
-        query = self.get_shared_state(context, "query")
-        query_id = str(query.id)
-        
-        if not research_plan:
-            raise ValueError("Research plan not found in context")
-        
-        all_results: List[SearchResult] = []
-        step_count = len(research_plan.search_steps)
-        
-        # Execute each search step
-        for idx, step in enumerate(research_plan.search_steps):
-            progress = (idx + 1) / step_count
-            self.update_progress(
-                context,
-                progress,
-                f"Executing step {idx + 1}/{step_count}: {step.description}"
-            )
+        try:
+            logger.info("ResearchAgent.execute started")
+            # Get research plan from context
+            research_plan: ResearchPlan = self.get_shared_state(context, "research_plan")
+            query = self.get_shared_state(context, "query")
+            logger.info(f"Research plan: {research_plan}")
+            logger.info(f"Query: {query}")
+            query_id = str(query.id)
             
-            # Execute searches for this step
-            step_results = await self._execute_search_step(
-                query_id=query_id,
-                query_content=query.content,
-                step=step
-            )
+            if not research_plan:
+                logger.error("Research plan not found in context")
+                raise ValueError("Research plan not found in context")
             
-            all_results.extend(step_results)
-        
-        # Analyze and score all results
-        self.update_progress(context, 0.95, "Analyzing result relevance")
-        scored_results = await self._score_results(query.content, all_results)
-        
-        # Sort by relevance score (descending)
-        scored_results.sort(key=lambda r: r.relevance_score, reverse=True)
-        
-        # Store in shared state
-        self.set_shared_state(context, "search_results", scored_results)
-        
-        # Calculate statistics
-        stats = self._calculate_statistics(scored_results)
-        
-        return {
-            "search_results": scored_results,
-            "total_results": len(scored_results),
-            "statistics": stats
-        }
+            all_results: List[SearchResult] = []
+            step_count = len(research_plan.search_steps)
+            
+            # Execute each search step
+            for idx, step in enumerate(research_plan.search_steps):
+                self.log_step(f"Executing step {idx + 1}/{step_count}: {step.description}")
+                
+                # Execute searches for this step
+                step_results = await self._execute_search_step(
+                    query_id=query_id,
+                    query_content=query.content,
+                    step=step
+                )
+                
+                all_results.extend(step_results)
+            
+            # Analyze and score all results
+            self.log_step("Analyzing result relevance")
+            scored_results = await self._score_results(query.content, all_results)
+            
+            # Sort by relevance score (descending)
+            scored_results.sort(key=lambda r: r.relevance_score, reverse=True)
+            
+            # Store in shared state
+            self.set_shared_state(context, "search_results", scored_results)
+            
+            # Calculate statistics
+            stats = self._calculate_statistics(scored_results)
+            
+            result = {
+                "search_results": scored_results,
+                "total_results": len(scored_results),
+                "statistics": stats
+            }
+            logger.info(f"ResearchAgent.execute completed. Total results: {len(scored_results)}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"ResearchAgent.execute failed: {e}", exc_info=True)
+            raise
     
     async def _execute_search_step(
         self,
@@ -129,35 +138,25 @@ class ResearchAgent(BaseCustomAgent):
             if source == SearchSource.GOOGLE:
                 try:
                     google_results = await self.google_service.search(
-                        query=search_query
+                        query=search_query,
+                        query_id=query_id
                     )
-                    # Convert to SearchResult models
-                    for result in google_results:
-                        result.query_id = query_id
-                        results.append(result)
+                    # Results already have query_id set
+                    results.extend(google_results)
                 except Exception as e:
-                    self.logger.log_agent_error(
-                        agent_id=self.agent_id.value,
-                        query_id=query_id,
-                        error=f"Google search failed: {str(e)}"
-                    )
+                    logger.error(f"{self.agent_id.value}: Google search failed for query {query_id}: {str(e)}", exc_info=True)
             
             elif source == SearchSource.ARXIV:
                 try:
                     arxiv_results = await self.arxiv_service.search_with_keywords(
+                        query_id=query_id,
                         keywords=step.keywords,
                         max_results=5
                     )
-                    # Convert to SearchResult models
-                    for result in arxiv_results:
-                        result.query_id = query_id
-                        results.append(result)
+                    # Results already have query_id set
+                    results.extend(arxiv_results)
                 except Exception as e:
-                    self.logger.log_agent_error(
-                        agent_id=self.agent_id.value,
-                        query_id=query_id,
-                        error=f"arXiv search failed: {str(e)}"
-                    )
+                    logger.error(f"{self.agent_id.value}: arXiv search failed for query {query_id}: {str(e)}", exc_info=True)
         
         return results
     
@@ -192,11 +191,7 @@ class ResearchAgent(BaseCustomAgent):
                     result.title,
                     result.snippet
                 )
-                self.logger.log_agent_error(
-                    agent_id=self.agent_id.value,
-                    query_id=result.query_id,
-                    error=f"Relevance scoring failed, using fallback: {str(e)}"
-                )
+                logger.error(f"{self.agent_id.value}: Relevance scoring failed for query {result.query_id}, using fallback: {str(e)}", exc_info=True)
         
         return results
     

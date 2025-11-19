@@ -8,25 +8,24 @@ This module provides the base class for all 4 custom agents:
 - Content Writing Agent
 """
 
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
-from uuid import UUID
+import logging
+from abc import abstractmethod
+from typing import Any, Dict
 
-from agent_framework import Agent, AgentContext
+from agent_framework import BaseAgent, AgentRunContext
 
-from ..models import AgentId, AgentStatus
-from ..models.agent_state import AgentState
-from ..observability.telemetry import get_tracer, TelemetryLogger
+from ..models import AgentId
+
+logger = logging.getLogger(__name__)
 
 
-class BaseCustomAgent(Agent, ABC):
+class BaseCustomAgent(BaseAgent):
     """
     Base class for all custom agents in the system.
     
-    Provides common functionality:
-    - State management
-    - Progress tracking
-    - Telemetry integration
+    Provides common functionality for multi-agent conversation:
+    - Shared state access
+    - Logging
     - Error handling
     
     Subclasses must implement the `execute` method with agent-specific logic.
@@ -35,8 +34,8 @@ class BaseCustomAgent(Agent, ABC):
     def __init__(
         self,
         agent_id: AgentId,
-        name: str,
-        description: str,
+        agent_name: str,
+        agent_description: str,
         **kwargs
     ):
         """
@@ -44,94 +43,119 @@ class BaseCustomAgent(Agent, ABC):
         
         Args:
             agent_id: Unique identifier from AgentId enum
-            name: Human-readable agent name
-            description: Agent purpose description
-            **kwargs: Additional arguments passed to Agent constructor
+            agent_name: Human-readable agent name
+            agent_description: Agent purpose description
+            **kwargs: Additional arguments (unused, for compatibility)
         """
-        super().__init__(name=name, description=description, **kwargs)
+        # Call parent constructor with proper arguments
+        super().__init__(
+            id=agent_id.value,
+            name=agent_name,
+            description=agent_description,
+            **kwargs
+        )
+        
         self.agent_id = agent_id
-        self.tracer = get_tracer()
-        self.logger = TelemetryLogger()
+        
+        # Workflow state reference (set by workflow)
+        self._workflow_state: Dict[str, Any] = {}
     
-    async def run(self, context: AgentContext) -> Any:
+    async def run(
+        self,
+        messages: str | list = None,
+        *,
+        thread = None,
+        **kwargs
+    ) -> Any:
         """
         Main entry point called by Agent Framework.
         
-        Wraps execute() with:
-        - State initialization
-        - Progress tracking
-        - Telemetry/logging
-        - Error handling
+        Wraps execute() with logging and error handling.
         
         Args:
-            context: Agent execution context with shared state
+            messages: Input messages (string or list of ChatMessage)
+            thread: Optional agent thread
+            **kwargs: Additional keyword arguments
             
         Returns:
             Result from execute() method
         """
-        # Extract query ID from context
-        query_id = context.state.get("query_id")
-        if not query_id:
-            raise ValueError("query_id not found in context state")
+        logger.info(f"{self.agent_id.value} agent starting")
+        logger.debug(f"Messages type: {type(messages)}, Thread: {thread}")
         
-        # Create tracer span for agent execution
-        with self.tracer.start_as_current_span(f"{self.agent_id}_execution") as span:
-            span.set_attribute("agent.id", self.agent_id.value)
-            span.set_attribute("query.id", str(query_id))
+        try:
+            # Create a simple context object that our agents can use
+            # GroupChat doesn't provide AgentRunContext, so we create our own
+            from types import SimpleNamespace
             
-            # Initialize agent state
-            agent_state = self._create_agent_state(query_id)
-            context.state[f"{self.agent_id}_state"] = agent_state
+            context = SimpleNamespace()
+            context.messages = messages if isinstance(messages, list) else [messages] if messages else []
+            context.thread = thread
+            context.state = kwargs.get('state', {})
+            context.kwargs = kwargs
             
-            # Log agent start
-            self.logger.log_agent_start(
-                agent_id=self.agent_id.value,
-                query_id=str(query_id)
-            )
+            # Execute agent-specific logic
+            result = await self.execute(context)
             
-            try:
-                # Update status to running
-                agent_state.status = AgentStatus.RUNNING
-                agent_state.progress = 0.0
-                
-                # Execute agent-specific logic
-                result = await self.execute(context)
-                
-                # Mark as completed
-                agent_state.status = AgentStatus.COMPLETED
-                agent_state.progress = 1.0
-                agent_state.intermediate_result = result
-                
-                # Log completion
-                self.logger.log_agent_complete(
-                    agent_id=self.agent_id.value,
-                    query_id=str(query_id),
-                    result=result
-                )
-                
-                span.set_attribute("agent.status", "completed")
-                return result
+            # Log completion
+            logger.info(f"{self.agent_id.value} agent completed")
             
-            except Exception as e:
-                # Mark as failed
-                agent_state.status = AgentStatus.FAILED
-                agent_state.error = str(e)
-                
-                # Log error
-                self.logger.log_agent_error(
-                    agent_id=self.agent_id.value,
-                    query_id=str(query_id),
-                    error=str(e)
-                )
-                
-                span.set_attribute("agent.status", "failed")
-                span.set_attribute("agent.error", str(e))
-                
-                # Re-raise to propagate to workflow
-                raise
+            return result
+        
+        except Exception as e:
+            # Log error
+            logger.error(f"{self.agent_id.value} agent failed: {e}", exc_info=True)
+            
+            # Re-raise to propagate to workflow
+            raise
+    
+    async def run_stream(
+        self,
+        messages: str | list = None,
+        *,
+        thread = None,
+        **kwargs
+    ):
+        """
+        Streaming version of run - delegates to run() for simplicity.
+        
+        Args:
+            messages: Input messages (string or list of ChatMessage)
+            thread: Optional agent thread
+            **kwargs: Additional keyword arguments
+            
+        Yields:
+            AgentRunResponseUpdate with result from run() method
+        """
+        from agent_framework import AgentRunResponseUpdate
+        
+        logger.debug(f"{self.agent_id.value}: run_stream called")
+        
+        result = await self.run(messages=messages, thread=thread, **kwargs)
+        
+        # Convert result to AgentRunResponseUpdate
+        # The result from execute() is a dict with agent-specific data
+        result_text = str(result) if result else "No result"
+        
+        yield AgentRunResponseUpdate(
+            text=result_text,
+            author_name=self.name,
+            role="assistant",
+            additional_properties=result if isinstance(result, dict) else {"data": result}
+        )
+    
+    def get_new_thread(self):
+        """
+        Create a new thread for this agent.
+        Required by AgentProtocol but not used in group chat context.
+        
+        Returns:
+            None - group chat manages threads
+        """
+        return None
     
     @abstractmethod
-    async def execute(self, context: AgentContext) -> Dict[str, Any]:
+    async def execute(self, context: AgentRunContext) -> Dict[str, Any]:
         """
         Agent-specific execution logic.
         
@@ -145,58 +169,18 @@ class BaseCustomAgent(Agent, ABC):
         """
         pass
     
-    def _create_agent_state(self, query_id: UUID | str) -> AgentState:
+    def log_step(self, step_description: str) -> None:
         """
-        Create initial agent state.
+        Log a step in the agent's execution.
         
         Args:
-            query_id: Associated query identifier
-            
-        Returns:
-            Initialized AgentState instance
+            step_description: Description of the current step
         """
-        return AgentState(
-            agent_id=self.agent_id,
-            query_id=str(query_id) if isinstance(query_id, UUID) else query_id,
-            status=AgentStatus.IDLE,
-            progress=0.0,
-            current_task=None,
-            intermediate_result=None,
-            error=None
-        )
-    
-    def update_progress(
-        self,
-        context: AgentContext,
-        progress: float,
-        current_task: Optional[str] = None
-    ) -> None:
-        """
-        Update agent progress in shared state.
-        
-        Args:
-            context: Agent execution context
-            progress: Progress value (0.0 to 1.0)
-            current_task: Optional description of current task
-        """
-        agent_state = context.state.get(f"{self.agent_id}_state")
-        if agent_state:
-            agent_state.progress = max(0.0, min(1.0, progress))
-            if current_task:
-                agent_state.current_task = current_task
-            
-            # Log progress
-            query_id = context.state.get("query_id")
-            self.logger.log_agent_progress(
-                agent_id=self.agent_id.value,
-                query_id=str(query_id),
-                progress=agent_state.progress,
-                current_task=current_task or ""
-            )
+        logger.info(f"{self.agent_id.value}: {step_description}")
     
     def get_shared_state(
         self,
-        context: AgentContext,
+        context,
         key: str,
         default: Any = None
     ) -> Any:
@@ -204,18 +188,19 @@ class BaseCustomAgent(Agent, ABC):
         Get value from shared state.
         
         Args:
-            context: Agent execution context
+            context: Agent execution context (not used, state comes from workflow)
             key: State key
             default: Default value if key not found
             
         Returns:
             Value from shared state or default
         """
-        return context.state.get(key, default)
+        # Use workflow state instead of context state
+        return self._workflow_state.get(key, default)
     
     def set_shared_state(
         self,
-        context: AgentContext,
+        context,
         key: str,
         value: Any
     ) -> None:
@@ -223,24 +208,12 @@ class BaseCustomAgent(Agent, ABC):
         Set value in shared state.
         
         Args:
-            context: Agent execution context
+            context: Agent execution context (not used, state comes from workflow)
             key: State key
             value: Value to store
         """
-        context.state[key] = value
+        # Use workflow state instead of context state
+        self._workflow_state[key] = value
     
-    def get_agent_state(self, context: AgentContext) -> Optional[AgentState]:
-        """
-        Get this agent's state from context.
-        
-        Args:
-            context: Agent execution context
-            
-        Returns:
-            AgentState instance or None if not found
-        """
-        return context.state.get(f"{self.agent_id}_state")
-
-
 # Export base class
 __all__ = ["BaseCustomAgent"]

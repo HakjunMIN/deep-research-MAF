@@ -94,7 +94,6 @@ export interface AnswerMetadata {
 export interface SynthesizedAnswer {
   id: string;
   query_id: string;
-  thread_id: string;
   content: string; // Markdown
   sources: SourceCitation[];
   sections: AnswerSection[];

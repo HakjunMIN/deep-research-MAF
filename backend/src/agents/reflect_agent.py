@@ -9,16 +9,17 @@ This agent:
 5. Provides quality feedback
 """
 
+import logging
 from typing import Any, Dict, List
 
-from agent_framework import AgentContext
+from agent_framework import AgentRunContext
 
 from .base import BaseCustomAgent
 from ..models import AgentId
 from ..models.search_result import SearchResult
 from ..services.azure_openai_service import AzureOpenAIService
 
-
+logger = logging.getLogger(__name__)
 class ReflectAgent(BaseCustomAgent):
     """
     Reflect Agent analyzes research completeness and quality.
@@ -34,12 +35,12 @@ class ReflectAgent(BaseCustomAgent):
         """Initialize Reflect Agent."""
         super().__init__(
             agent_id=AgentId.REFLECT,
-            name="Reflect Agent",
-            description="Analyzes research completeness and suggests improvements"
+            agent_name="Reflect Agent",
+            agent_description="Analyzes research completeness and suggests improvements"
         )
         self.openai_service = AzureOpenAIService()
     
-    async def execute(self, context: AgentContext) -> Dict[str, Any]:
+    async def execute(self, context: AgentRunContext) -> Dict[str, Any]:
         """
         Analyze research completeness and provide feedback.
         
@@ -49,69 +50,80 @@ class ReflectAgent(BaseCustomAgent):
         Returns:
             Dict with analysis, gaps, and recommendations
         """
-        # Get data from context
-        query = self.get_shared_state(context, "query")
-        research_plan = self.get_shared_state(context, "research_plan")
-        search_results: List[SearchResult] = self.get_shared_state(context, "search_results")
-        
-        if not search_results:
-            return {
-                "completeness_score": 0.0,
-                "is_sufficient": False,
-                "gaps": ["No search results found"],
-                "recommendations": ["Execute search steps to gather information"],
-                "feedback": "Cannot proceed without search results"
-            }
-        
-        # Step 1: Analyze result quality (33% progress)
-        self.update_progress(context, 0.33, "Analyzing result quality")
-        quality_analysis = await self._analyze_quality(search_results)
-        
-        # Step 2: Check topic coverage (66% progress)
-        self.update_progress(context, 0.66, "Checking topic coverage")
-        coverage_analysis = await self._analyze_coverage(
-            query.content,
-            research_plan.keywords,
-            search_results
-        )
-        
-        # Step 3: Generate recommendations (100% progress)
-        self.update_progress(context, 1.0, "Generating recommendations")
-        recommendations = await self._generate_recommendations(
-            query.content,
-            quality_analysis,
-            coverage_analysis
-        )
-        
-        # Calculate overall completeness score
-        completeness_score = self._calculate_completeness_score(
-            quality_analysis,
-            coverage_analysis
-        )
-        
-        # Determine if sufficient for synthesis
-        is_sufficient = completeness_score >= 0.6 and len(search_results) >= 3
-        
-        # Store feedback in shared state
-        feedback_data = {
-            "completeness_score": completeness_score,
-            "quality_analysis": quality_analysis,
-            "coverage_analysis": coverage_analysis,
-            "is_sufficient": is_sufficient
-        }
-        self.set_shared_state(context, "reflect_feedback", feedback_data)
-        
-        return {
-            "completeness_score": completeness_score,
-            "is_sufficient": is_sufficient,
-            "gaps": coverage_analysis.get("gaps", []),
-            "recommendations": recommendations,
-            "feedback": self._generate_feedback_summary(
-                completeness_score,
-                is_sufficient,
+        try:
+            logger.info("ReflectAgent.execute started")
+            # Get data from context
+            query = self.get_shared_state(context, "query")
+            research_plan = self.get_shared_state(context, "research_plan")
+            search_results: List[SearchResult] = self.get_shared_state(context, "search_results")
+            logger.info(f"Query: {query}")
+            logger.info(f"Search results count: {len(search_results) if search_results else 0}")
+            
+            if not search_results:
+                logger.warning("No search results available")
+                return {
+                    "completeness_score": 0.0,
+                    "is_sufficient": False,
+                    "gaps": ["No search results found"],
+                    "recommendations": ["Execute search steps to gather information"],
+                    "feedback": "Cannot proceed without search results"
+                }
+            
+            # Step 1: Analyze result quality
+            self.log_step("Analyzing result quality")
+            quality_analysis = await self._analyze_quality(search_results)
+            
+            # Step 2: Check topic coverage
+            self.log_step("Checking topic coverage")
+            coverage_analysis = await self._analyze_coverage(
+                query.content,
+                research_plan.keywords,
+                search_results
+            )
+            
+            # Step 3: Generate recommendations
+            self.log_step("Generating recommendations")
+            recommendations = await self._generate_recommendations(
+                query.content,
+                quality_analysis,
                 coverage_analysis
             )
-        }
+            
+            # Calculate overall completeness score
+            completeness_score = self._calculate_completeness_score(
+                quality_analysis,
+                coverage_analysis
+            )
+            
+            # Determine if sufficient for synthesis
+            is_sufficient = completeness_score >= 0.6 and len(search_results) >= 3
+            
+            # Store feedback in shared state
+            feedback_data = {
+                "completeness_score": completeness_score,
+                "quality_analysis": quality_analysis,
+                "coverage_analysis": coverage_analysis,
+                "is_sufficient": is_sufficient
+            }
+            self.set_shared_state(context, "reflect_feedback", feedback_data)
+            
+            result = {
+                "completeness_score": completeness_score,
+                "is_sufficient": is_sufficient,
+                "gaps": coverage_analysis.get("gaps", []),
+                "recommendations": recommendations,
+                "feedback": self._generate_feedback_summary(
+                    completeness_score,
+                    is_sufficient,
+                    coverage_analysis
+                )
+            }
+            logger.info(f"ReflectAgent.execute completed. Completeness: {completeness_score:.2f}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"ReflectAgent.execute failed: {e}", exc_info=True)
+            raise
     
     async def _analyze_quality(
         self,

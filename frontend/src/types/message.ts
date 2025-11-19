@@ -47,7 +47,6 @@ export enum QueryStatus {
  */
 export interface ResearchQuery {
   id: string;
-  thread_id: string;
   content: string;
   search_sources: SearchSource[];
   status: QueryStatus;
@@ -61,29 +60,6 @@ export interface ResearchQuery {
 export enum SearchSource {
   GOOGLE = "google",
   ARXIV = "arxiv"
-}
-
-/**
- * Thread status matching backend ThreadStatus enum.
- */
-export enum ThreadStatus {
-  ACTIVE = "active",
-  IDLE = "idle",
-  CLOSED = "closed"
-}
-
-/**
- * Conversation thread containing multiple queries/answers.
- * Mirrors backend ConversationThread model.
- */
-export interface ConversationThread {
-  id: string;
-  session_id: string;
-  queries: string[]; // List of query IDs
-  answers: string[]; // List of answer IDs
-  status: ThreadStatus;
-  created_at: string;
-  updated_at: string;
 }
 
 /**

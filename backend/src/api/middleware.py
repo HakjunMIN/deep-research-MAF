@@ -1,5 +1,6 @@
 """FastAPI middleware for CORS and error handling."""
 
+import logging
 import traceback
 from typing import Callable
 
@@ -8,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from ..observability.telemetry import logger
+logger = logging.getLogger(__name__)
 
 
 def setup_cors(app: FastAPI, allow_origins: list[str] | None = None) -> None:
@@ -99,7 +100,7 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
                 content={
                     "error": "InternalServerError",
                     "message": "An unexpected error occurred",
-                    "details": str(e) if logger.level <= 10 else None  # Include details in debug mode
+                    "details": str(e)
                 }
             )
 

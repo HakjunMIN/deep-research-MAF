@@ -74,7 +74,6 @@ class SynthesizedAnswer(BaseEntity):
     """
     
     query_id: UUID = Field(..., description="ID of the related query")
-    thread_id: UUID = Field(..., description="ID of the conversation thread")
     content: str = Field(..., description="Answer content in Markdown format")
     sources: List[SourceCitation] = Field(..., min_length=1, description="List of cited sources")
     sections: List[AnswerSection] = Field(..., min_length=1, description="Answer sections")

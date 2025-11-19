@@ -9,9 +9,10 @@ This agent:
 5. Generates metadata
 """
 
+import logging
 from typing import Any, Dict, List
 
-from agent_framework import AgentContext
+from agent_framework import AgentRunContext
 
 from .base import BaseCustomAgent
 from ..models import AgentId
@@ -23,6 +24,8 @@ from ..models.synthesized_answer import (
     AnswerMetadata
 )
 from ..services.azure_openai_service import AzureOpenAIService
+
+logger = logging.getLogger(__name__)
 
 
 class ContentWritingAgent(BaseCustomAgent):
@@ -41,12 +44,12 @@ class ContentWritingAgent(BaseCustomAgent):
         """Initialize Content Writing Agent."""
         super().__init__(
             agent_id=AgentId.CONTENT,
-            name="Content Writing Agent",
-            description="Synthesizes comprehensive answers with citations"
+            agent_name="Content Writing Agent",
+            agent_description="Synthesizes comprehensive answers with citations"
         )
         self.openai_service = AzureOpenAIService()
     
-    async def execute(self, context: AgentContext) -> Dict[str, Any]:
+    async def execute(self, context: AgentRunContext) -> Dict[str, Any]:
         """
         Synthesize final answer from research results.
         
@@ -56,52 +59,62 @@ class ContentWritingAgent(BaseCustomAgent):
         Returns:
             Dict with synthesized_answer
         """
-        # Get data from context
-        query = self.get_shared_state(context, "query")
-        search_results: List[SearchResult] = self.get_shared_state(context, "search_results")
-        reflect_feedback = self.get_shared_state(context, "reflect_feedback")
-        
-        if not search_results:
-            raise ValueError("No search results available for synthesis")
-        
-        # Step 1: Prepare sources and citations (25% progress)
-        self.update_progress(context, 0.25, "Preparing sources")
-        sources = self._prepare_sources(search_results)
-        
-        # Step 2: Generate answer content (50% progress)
-        self.update_progress(context, 0.5, "Generating answer content")
-        answer_content = await self._generate_content(
-            query.content,
-            search_results,
-            sources
-        )
-        
-        # Step 3: Structure answer into sections (75% progress)
-        self.update_progress(context, 0.75, "Structuring answer")
-        sections = self._create_sections(answer_content, sources)
-        
-        # Step 4: Generate metadata (100% progress)
-        self.update_progress(context, 1.0, "Finalizing answer")
-        metadata = self._create_metadata(search_results, answer_content)
-        
-        # Create synthesized answer
-        synthesized_answer = SynthesizedAnswer(
-            query_id=str(query.id),
-            thread_id=query.thread_id,
-            content=answer_content,
-            sources=sources,
-            sections=sections,
-            metadata=metadata
-        )
-        
-        # Store in shared state
-        self.set_shared_state(context, "synthesized_answer", synthesized_answer)
-        
-        return {
-            "synthesized_answer": synthesized_answer,
-            "word_count": metadata.word_count,
-            "source_count": metadata.total_sources
-        }
+        try:
+            logger.info("ContentWritingAgent.execute started")
+            # Get data from context
+            query = self.get_shared_state(context, "query")
+            logger.info(f"Query: {query}")
+            search_results: List[SearchResult] = self.get_shared_state(context, "search_results")
+            logger.info(f"Search results count: {len(search_results) if search_results else 0}")
+            
+            if not search_results:
+                logger.error("No search results available for synthesis")
+                raise ValueError("No search results available for synthesis")
+            
+            # Step 1: Prepare sources and citations
+            self.log_step("Preparing sources")
+            sources = self._prepare_sources(search_results)
+            
+            # Step 2: Generate answer content
+            self.log_step("Generating answer content")
+            answer_content = await self._generate_content(
+                query.content,
+                search_results,
+                sources
+            )
+            
+            # Step 3: Structure answer into sections
+            self.log_step("Structuring answer")
+            sections = self._create_sections(answer_content, sources)
+            
+            # Step 4: Generate metadata
+            self.log_step("Finalizing answer")
+            metadata = self._create_metadata(search_results, answer_content)
+            
+            # Create synthesized answer
+            synthesized_answer = SynthesizedAnswer(
+                query_id=str(query.id),
+                thread_id=getattr(query, 'thread_id', str(query.id)),  # Use query_id as fallback if thread_id not available
+                content=answer_content,
+                sources=sources,
+                sections=sections,
+                metadata=metadata
+            )
+            
+            # Store in shared state
+            self.set_shared_state(context, "synthesized_answer", synthesized_answer)
+            
+            result = {
+                "synthesized_answer": synthesized_answer,
+                "word_count": metadata.word_count,
+                "source_count": metadata.total_sources
+            }
+            logger.info(f"ContentWritingAgent.execute completed. Result keys: {list(result.keys())}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"ContentWritingAgent.execute failed: {e}", exc_info=True)
+            raise
     
     def _prepare_sources(
         self,
@@ -183,7 +196,7 @@ Generate the answer:"""
         
         try:
             # Generate content using OpenAI
-            content = await self.openai_service.chat_completion(
+            response = await self.openai_service.chat_completion(
                 messages=[
                     {"role": "system", "content": "You are a helpful research assistant."},
                     {"role": "user", "content": prompt}
@@ -192,15 +205,13 @@ Generate the answer:"""
                 max_tokens=2000
             )
             
+            # Extract text content from ChatCompletion response
+            content = response.choices[0].message.content
             return content
         
         except Exception as e:
             # Fallback: create basic answer
-            self.logger.log_agent_error(
-                agent_id=self.agent_id.value,
-                query_id=results[0].query_id if results else "unknown",
-                error=f"Content generation failed, using fallback: {str(e)}"
-            )
+            logger.error(f"{self.agent_id.value}: Content generation failed for query {results[0].query_id if results else 'unknown'}, using fallback: {str(e)}", exc_info=True)
             
             return self._generate_fallback_content(query, results, sources)
     
@@ -315,8 +326,9 @@ Generate the answer:"""
         from datetime import datetime
         
         # Count sources by type
-        google_count = sum(1 for r in results if r.source.value == "google")
-        arxiv_count = sum(1 for r in results if r.source.value == "arxiv")
+        # Handle both enum and string source values
+        google_count = sum(1 for r in results if (r.source.value if hasattr(r.source, 'value') else r.source) == "google")
+        arxiv_count = sum(1 for r in results if (r.source.value if hasattr(r.source, 'value') else r.source) == "arxiv")
         
         # Count words (approximate)
         word_count = len(content.split())

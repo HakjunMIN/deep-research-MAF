@@ -1,14 +1,26 @@
 """FastAPI application entry point for Deep Research Agent."""
 
 import os
+import logging
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from .api.middleware import setup_all_middleware
 from .api.routes import router
-from .observability.telemetry import logger, setup_telemetry
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Setup basic logging with more detailed format
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s - %(name)s:%(lineno)d - %(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -20,14 +32,6 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Starting Deep Research Agent API")
-    
-    # Initialize telemetry
-    setup_telemetry(
-        service_name="deep-research-agent",
-        service_version="1.0.0",
-        otlp_endpoint=os.getenv("OTLP_ENDPOINT", "http://localhost:4317")
-    )
-    logger.info("Telemetry initialized")
     
     yield
     
@@ -82,7 +86,6 @@ def create_app() -> FastAPI:
             }
         )
     
-    logger.info("FastAPI application configured")
     return app
 
 

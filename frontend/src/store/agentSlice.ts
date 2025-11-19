@@ -239,12 +239,14 @@ export const useAgentStateStore = create<AgentStateStore>()(
 
 /**
  * Selector hooks for common queries.
+ * Note: useActiveAgents returns a Set to avoid creating new array references.
+ * Convert to array in the component using useMemo if needed.
  */
 export const useAgentStatesForQuery = (queryId: string) =>
   useAgentStateStore((state) => state.agentStates[queryId] || []);
 
-export const useActiveAgents = () =>
-  useAgentStateStore((state) => Array.from(state.activeAgents));
+export const useActiveAgentsSet = () =>
+  useAgentStateStore((state) => state.activeAgents);
 
 export const useIsAgentExpanded = (agentId: AgentId) =>
   useAgentStateStore((state) => state.expandedAgents.has(agentId));

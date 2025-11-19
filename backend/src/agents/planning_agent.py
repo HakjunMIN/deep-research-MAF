@@ -8,14 +8,17 @@ This agent:
 4. Determines which sources to use (Google, arXiv)
 """
 
+import logging
 from typing import Any, Dict, List
 
-from agent_framework import AgentContext
+from agent_framework import AgentRunContext
 
 from .base import BaseCustomAgent
 from ..models import AgentId, SearchSource
 from ..models.research_plan import ResearchPlan, SearchStep
 from ..services.azure_openai_service import AzureOpenAIService
+
+logger = logging.getLogger(__name__)
 
 
 class PlanningAgent(BaseCustomAgent):
@@ -33,12 +36,12 @@ class PlanningAgent(BaseCustomAgent):
         """Initialize Planning Agent."""
         super().__init__(
             agent_id=AgentId.PLANNING,
-            name="Planning Agent",
-            description="Analyzes research questions and creates search strategies"
+            agent_name="Planning Agent",
+            agent_description="Analyzes research questions and creates search strategies"
         )
         self.openai_service = AzureOpenAIService()
     
-    async def execute(self, context: AgentContext) -> Dict[str, Any]:
+    async def execute(self, context: AgentRunContext) -> Dict[str, Any]:
         """
         Create research plan for the query.
         
@@ -48,42 +51,69 @@ class PlanningAgent(BaseCustomAgent):
         Returns:
             Dict with research_plan key containing ResearchPlan instance
         """
-        # Get query from context
-        query = self.get_shared_state(context, "query")
-        query_content = query.content
-        query_id = str(query.id)
-        
-        # Step 1: Generate keywords (25% progress)
-        self.update_progress(context, 0.25, "Generating search keywords")
-        keywords = await self._generate_keywords(query_content)
-        
-        # Step 2: Determine sources (50% progress)
-        self.update_progress(context, 0.5, "Determining search sources")
-        sources = await self._determine_sources(query_content, keywords)
-        
-        # Step 3: Create search steps (75% progress)
-        self.update_progress(context, 0.75, "Creating search strategy")
-        search_steps = await self._create_search_steps(query_content, keywords, sources)
-        
-        # Step 4: Create research plan (100% progress)
-        self.update_progress(context, 1.0, "Finalizing research plan")
-        research_plan = ResearchPlan(
-            query_id=query_id,
-            strategy=await self._generate_strategy_summary(query_content, search_steps),
-            keywords=keywords,
-            search_steps=search_steps,
-            estimated_time=self._estimate_time(search_steps)
-        )
-        
-        # Store in shared state
-        self.set_shared_state(context, "research_plan", research_plan)
-        
-        return {
-            "research_plan": research_plan,
-            "keywords": keywords,
-            "sources": sources,
-            "step_count": len(search_steps)
-        }
+        try:
+            logger.info("PlanningAgent.execute started")
+            # Get query from context - if not set, create it from the task
+            query = self.get_shared_state(context, "query")
+            logger.info(f"Query from context: {query}")
+            
+            if query is None:
+                # Initialize query from task if not already in state
+                # The task should be the query content string
+                from ..models.query import ResearchQuery
+                from ..models import SearchSource
+                
+                task_content = getattr(context, 'task', '') or str(context)
+                
+                # Create a new query object with default sources
+                query = ResearchQuery(
+                    content=task_content,
+                    search_sources=[SearchSource.GOOGLE]  # Default, will be updated if needed
+                )
+                
+                # Store in shared state for other agents
+                self.set_shared_state(context, "query", query)
+            
+            query_content = query.content
+            query_id = str(query.id)
+            
+            # Step 1: Generate keywords
+            self.log_step("Generating search keywords")
+            keywords = await self._generate_keywords(query_content)
+            
+            # Step 2: Determine sources
+            self.log_step("Determining search sources")
+            sources = await self._determine_sources(query_content, keywords)
+            
+            # Step 3: Create search steps
+            self.log_step("Creating search strategy")
+            search_steps = await self._create_search_steps(query_content, keywords, sources)
+            
+            # Step 4: Create research plan
+            self.log_step("Finalizing research plan")
+            research_plan = ResearchPlan(
+                query_id=query_id,
+                strategy=await self._generate_strategy_summary(query_content, search_steps),
+                keywords=keywords,
+                search_steps=search_steps,
+                estimated_time=self._estimate_time(search_steps)
+            )
+            
+            # Store in shared state
+            self.set_shared_state(context, "research_plan", research_plan)
+            
+            result = {
+                "research_plan": research_plan,
+                "keywords": keywords,
+                "sources": sources,
+                "step_count": len(search_steps)
+            }
+            logger.info(f"PlanningAgent.execute completed. Result keys: {list(result.keys())}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"PlanningAgent.execute failed: {e}", exc_info=True)
+            raise
     
     async def _generate_keywords(self, query: str) -> List[str]:
         """
