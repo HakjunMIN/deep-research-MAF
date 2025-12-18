@@ -24,7 +24,6 @@ from ..agents.reflect_agent import ReflectAgent
 from ..agents.content_agent import ContentWritingAgent
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # Ensure INFO level is enabled
 
 
 def select_next_speaker(state: GroupChatStateSnapshot) -> str | None:

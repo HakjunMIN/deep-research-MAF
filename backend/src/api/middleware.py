@@ -18,18 +18,19 @@ def setup_cors(app: FastAPI, allow_origins: list[str] | None = None) -> None:
     
     Args:
         app: FastAPI application instance
-        allow_origins: List of allowed origins (defaults to ["http://localhost:5173"])
+        allow_origins: List of allowed origins (defaults to ["*"] for same-origin deployments)
     """
     if allow_origins is None:
-        # Default to Vite dev server
-        allow_origins = ["http://localhost:5173"]
+        # Default to allow all origins for same-origin deployments
+        allow_origins = ["*"]
     
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allow_origins,
-        allow_credentials=True,
+        allow_credentials=False if "*" in allow_origins else True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["*"],
     )
     logger.info(f"CORS configured with allowed origins: {allow_origins}")
 
@@ -134,20 +135,26 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         Returns:
             Response from handler
         """
-        # Log request
+        # Log detailed request information
+        logger.info("=" * 60)
         logger.info(
-            f'{{"event": "http_request", "method": "{request.method}", '
-            f'"path": "{request.url.path}", "client": "{request.client.host if request.client else "unknown"}"}}'
+            f"HTTP Request: {request.method} {request.url.path}"
         )
+        logger.debug(f"  Client: {request.client.host if request.client else 'unknown'}")
+        logger.debug(f"  Headers: {dict(request.headers)}")
         
         # Process request
+        import time
+        start_time = time.time()
         response = await call_next(request)
+        duration = time.time() - start_time
         
         # Log response
         logger.info(
-            f'{{"event": "http_response", "method": "{request.method}", '
-            f'"path": "{request.url.path}", "status_code": {response.status_code}}}'
+            f"HTTP Response: {request.method} {request.url.path} - "
+            f"Status: {response.status_code} - Duration: {duration:.3f}s"
         )
+        logger.info("=" * 60)
         
         return response
 
@@ -171,16 +178,21 @@ def setup_all_middleware(
     """
     Setup all middleware for the application.
     
+    Middleware order is important: they are applied in reverse order during request processing.
+    CORS should be last (applied first during request) to handle OPTIONS properly.
+    
     Args:
         app: FastAPI application instance
         allow_origins: List of allowed CORS origins
         enable_request_logging: Whether to enable request logging
     """
-    setup_cors(app, allow_origins)
-    setup_error_handling(app)
-    
+    # Add middleware in reverse order of execution
+    # (last added is first to process request)
     if enable_request_logging:
         setup_request_logging(app)
+    
+    setup_error_handling(app)
+    setup_cors(app, allow_origins)  # CORS last = first to process
     
     logger.info("All middleware configured successfully")
 

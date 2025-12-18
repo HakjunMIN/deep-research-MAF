@@ -16,7 +16,6 @@ from ..models.synthesized_answer import SynthesizedAnswer
 from ..workflows.group_chat import ResearchWorkflow
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # Ensure INFO level is enabled
 
 # Custom JSON encoder for UUID and datetime
 class CustomJSONEncoder(json.JSONEncoder):
@@ -193,24 +192,49 @@ async def submit_research_stream(request: ResearchRequest):
     """
     async def event_generator():
         try:
+            logger.info("=" * 60)
             logger.info(f"Starting streaming research for: {request.content[:50]}...")
+            logger.info(f"Search sources: {request.search_sources}")
+            logger.info("=" * 60)
             
             # Create workflow instance
+            logger.debug("Creating workflow instance for streaming...")
             workflow = ResearchWorkflow()
+            logger.debug("Workflow instance created")
             
             # Execute workflow with streaming
+            event_count = 0
+            logger.info("Starting workflow execution stream...")
             async for event in workflow.execute_query_stream(
                 query_content=request.content,
                 search_sources=[str(src) for src in request.search_sources]
             ):
+                event_count += 1
+                event_type = event.get("type", "unknown")
+                
+                # Log event details based on type
+                if event_type == "agent_status":
+                    logger.info(f"  Agent: {event.get('agent', 'unknown')}, Status: {event.get('status', 'unknown')}")
+                elif event_type == "content_chunk":
+                    chunk_length = len(event.get("chunk", ""))
+                    logger.debug(f"  Content chunk: {chunk_length} chars")
+                elif event_type == "result":
+                    logger.info(f"  Final result received")
+                elif event_type == "error":
+                    logger.error(f"  Error: {event.get('message', 'unknown')}")
+                
                 # Send event as SSE
                 event_data = json.dumps(event, ensure_ascii=False, cls=CustomJSONEncoder)
                 yield f"data: {event_data}\n\n"
             
-            logger.info("Streaming research completed")
+            logger.info("=" * 60)
+            logger.info(f"Streaming research completed. Total events: {event_count}")
+            logger.info("=" * 60)
             
         except Exception as e:
+            logger.error("=" * 60)
             logger.error(f"Streaming research failed: {e}", exc_info=True)
+            logger.error("=" * 60)
             error_event = {
                 "type": "error",
                 "message": str(e)

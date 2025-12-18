@@ -1,6 +1,8 @@
 import type { StreamEvent, ResearchRequest } from '../types';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Use relative URL for same-origin requests (no hardcoded localhost)
+// This works for both development (with proxy) and production (same origin)
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 export async function* streamResearch(
   request: ResearchRequest
