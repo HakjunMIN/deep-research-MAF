@@ -761,9 +761,11 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "agent-framework" },
+    { name = "agent-framework-ag-ui" },
     { name = "arxiv" },
     { name = "fastapi" },
     { name = "google-api-python-client" },
+    { name = "httpx" },
     { name = "openai" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp" },
@@ -778,9 +780,11 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework", specifier = ">=1.0.0b251112.post1" },
+    { name = "agent-framework-ag-ui", specifier = ">=0.1.0" },
     { name = "arxiv", specifier = ">=2.3.1" },
     { name = "fastapi", specifier = ">=0.121.2" },
     { name = "google-api-python-client", specifier = ">=2.187.0" },
+    { name = "httpx", specifier = ">=0.28.0" },
     { name = "openai", specifier = ">=2.8.0" },
     { name = "opentelemetry-api", specifier = ">=1.20.0" },
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.20.0" },

@@ -104,6 +104,16 @@ def create_app() -> FastAPI:
     else:
         logger.warning(f"Static directory not found: {static_dir}")
     
+    # Add AG-UI endpoint for streaming agent protocol
+    try:
+        from .agui import add_agui_endpoints
+        logger.info("Adding AG-UI endpoint at /agui")
+        add_agui_endpoints(app, "/agui")
+    except ImportError as e:
+        logger.warning(f"AG-UI module not available, skipping: {e}")
+    except Exception as e:
+        logger.error(f"Failed to add AG-UI endpoint: {e}")
+    
     # Health check endpoint
     @app.get("/health", tags=["system"])
     async def health_check():

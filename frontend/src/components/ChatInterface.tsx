@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import type { FormEvent } from 'react';
-import type { Message } from '../types';
-import { streamResearch } from '../services/api';
+import type { Message, ToolCall, AGUIEvent } from '../types';
+import { streamAGUI } from '../services/api';
 import { MessageBubble } from './MessageBubble';
 import { StatusIndicator } from './StatusIndicator';
 
@@ -10,6 +10,8 @@ export function ChatInterface() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
+  const [threadId, setThreadId] = useState<string | undefined>();
+  const [currentToolCalls, setCurrentToolCalls] = useState<Map<string, ToolCall>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -42,10 +44,11 @@ export function ChatInterface() {
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
+    setCurrentToolCalls(new Map());
 
     const assistantMessageId = (Date.now() + 1).toString();
     let assistantContent = '';
-    let assistantSources: Message['sources'] = [];
+    const toolCallsMap = new Map<string, ToolCall>();
 
     try {
       // Create initial assistant message
@@ -56,94 +59,19 @@ export function ChatInterface() {
         timestamp: new Date(),
         isStreaming: true,
         status: 'pending',
+        toolCalls: [],
       };
       setMessages(prev => [...prev, assistantMessage]);
 
-      // Stream the response
-      for await (const event of streamResearch({
-        content: userMessage.content,
-        search_sources: ['google'],
-      })) {
-        switch (event.type) {
-          case 'workflow_start':
-            setStatusMessage('🚀 Starting research workflow...');
-            break;
-          
-          case 'agent_start':
-            setStatusMessage(`⚡ ${event.agent}: Processing...`);
-            break;
-          
-          case 'agent_complete':
-            setStatusMessage(`✅ ${event.agent}: Completed`);
-            break;
-          
-          case 'plan_created':
-            setStatusMessage('📋 Research plan created');
-            break;
-          
-          case 'research_complete':
-            setStatusMessage(`🔎 Found ${event.results_count || 0} results`);
-            break;
-          
-          case 'answer_start':
-            setStatusMessage('📝 Generating answer...');
-            break;
-          
-          case 'answer_chunk':
-            if (event.content) {
-              assistantContent += event.content;
-              setMessages(prev => 
-                prev.map(msg => 
-                  msg.id === assistantMessageId
-                    ? { ...msg, content: assistantContent }
-                    : msg
-                )
-              );
-            }
-            break;
-          
-          case 'answer_complete':
-            if (event.answer?.sources) {
-              assistantSources = event.answer.sources;
-            }
-            setMessages(prev => 
-              prev.map(msg => 
-                msg.id === assistantMessageId
-                  ? { 
-                      ...msg, 
-                      content: assistantContent,
-                      sources: assistantSources,
-                      isStreaming: false,
-                      status: 'completed'
-                    }
-                  : msg
-              )
-            );
-            break;
-          
-          case 'workflow_complete':
-            setStatusMessage('');
-            break;
-          
-          case 'error':
-            setStatusMessage(`❌ Error: ${event.message || 'Unknown error'}`);
-            setMessages(prev => 
-              prev.map(msg => 
-                msg.id === assistantMessageId
-                  ? { 
-                      ...msg, 
-                      content: assistantContent || 'An error occurred during research.',
-                      isStreaming: false,
-                      status: 'error'
-                    }
-                  : msg
-              )
-            );
-            break;
-        }
+      // Stream the response using AG-UI protocol
+      for await (const event of streamAGUI(userMessage.content, threadId)) {
+        handleAGUIEvent(event, assistantMessageId, assistantContent, toolCallsMap, (content) => {
+          assistantContent = content;
+        });
       }
+
     } catch (error) {
-      console.error('Error during streaming:', error);
+      console.error('Error during AG-UI streaming:', error);
       setStatusMessage('');
       setMessages(prev => 
         prev.map(msg => 
@@ -161,6 +89,167 @@ export function ChatInterface() {
       setIsLoading(false);
       setStatusMessage('');
     }
+  };
+
+  const handleAGUIEvent = (
+    event: AGUIEvent,
+    assistantMessageId: string,
+    currentContent: string,
+    toolCallsMap: Map<string, ToolCall>,
+    setContent: (content: string) => void
+  ) => {
+    console.log('AG-UI Event:', event.type, event);
+    
+    switch (event.type) {
+      case 'RUN_STARTED':
+        setStatusMessage('🚀 Starting research...');
+        if (event.threadId) {
+          setThreadId(event.threadId);
+        }
+        break;
+
+      case 'TEXT_MESSAGE_START':
+        console.log('TEXT_MESSAGE_START received');
+        setStatusMessage('📝 Generating response...');
+        break;
+
+      case 'TEXT_MESSAGE_CONTENT':
+        console.log('TEXT_MESSAGE_CONTENT delta:', event.delta);
+        if (event.delta) {
+          const newContent = currentContent + event.delta;
+          setContent(newContent);
+          setMessages(prev => 
+            prev.map(msg => 
+              msg.id === assistantMessageId
+                ? { ...msg, content: newContent }
+                : msg
+            )
+          );
+        }
+        break;
+
+      case 'TEXT_MESSAGE_END':
+        console.log('TEXT_MESSAGE_END received');
+        setStatusMessage('');
+        // Mark message as complete (content already updated in TEXT_MESSAGE_CONTENT)
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.id === assistantMessageId
+              ? { ...msg, isStreaming: false, status: 'completed' }
+              : msg
+          )
+        );
+        break;
+
+      case 'TOOL_CALL_START':
+        if (event.toolCallId && event.toolCallName) {
+          const toolCall: ToolCall = {
+            id: event.toolCallId,
+            name: event.toolCallName,
+            arguments: '',
+            status: 'executing',
+          };
+          toolCallsMap.set(event.toolCallId, toolCall);
+          setCurrentToolCalls(new Map(toolCallsMap));
+          setStatusMessage(`🔧 ${getToolDisplayName(event.toolCallName)}...`);
+          
+          // Update message with tool calls
+          setMessages(prev => 
+            prev.map(msg => 
+              msg.id === assistantMessageId
+                ? { ...msg, toolCalls: Array.from(toolCallsMap.values()) }
+                : msg
+            )
+          );
+        }
+        break;
+
+      case 'TOOL_CALL_ARGS':
+        if (event.toolCallId && event.delta) {
+          const toolCall = toolCallsMap.get(event.toolCallId);
+          if (toolCall) {
+            toolCall.arguments = (toolCall.arguments || '') + event.delta;
+            toolCallsMap.set(event.toolCallId, toolCall);
+            setCurrentToolCalls(new Map(toolCallsMap));
+          }
+        }
+        break;
+
+      case 'TOOL_CALL_END':
+        if (event.toolCallId) {
+          const toolCall = toolCallsMap.get(event.toolCallId);
+          if (toolCall) {
+            toolCall.status = 'pending';
+            toolCallsMap.set(event.toolCallId, toolCall);
+            setCurrentToolCalls(new Map(toolCallsMap));
+          }
+        }
+        break;
+
+      case 'TOOL_CALL_RESULT':
+        if (event.toolCallId) {
+          const toolCall = toolCallsMap.get(event.toolCallId);
+          if (toolCall) {
+            toolCall.result = event.content;
+            toolCall.status = 'completed';
+            toolCallsMap.set(event.toolCallId, toolCall);
+            setCurrentToolCalls(new Map(toolCallsMap));
+            setStatusMessage(`✅ ${getToolDisplayName(toolCall.name)} completed`);
+            
+            // Update message with tool calls
+            setMessages(prev => 
+              prev.map(msg => 
+                msg.id === assistantMessageId
+                  ? { ...msg, toolCalls: Array.from(toolCallsMap.values()) }
+                  : msg
+              )
+            );
+          }
+        }
+        break;
+
+      case 'RUN_FINISHED':
+        setStatusMessage('');
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.id === assistantMessageId
+              ? { 
+                  ...msg, 
+                  isStreaming: false,
+                  status: 'completed',
+                  toolCalls: Array.from(toolCallsMap.values()),
+                }
+              : msg
+          )
+        );
+        break;
+
+      case 'RUN_ERROR':
+        setStatusMessage(`❌ Error: ${event.message || 'Unknown error'}`);
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.id === assistantMessageId
+              ? { 
+                  ...msg, 
+                  content: currentContent || 'An error occurred during research.',
+                  isStreaming: false,
+                  status: 'error'
+                }
+              : msg
+          )
+        );
+        break;
+    }
+  };
+
+  const getToolDisplayName = (toolName: string): string => {
+    const displayNames: Record<string, string> = {
+      'search_google': '🔍 Searching Google',
+      'search_arxiv': '📚 Searching arXiv',
+      'create_research_plan': '📋 Creating research plan',
+      'synthesize_answer': '✍️ Synthesizing answer',
+    };
+    return displayNames[toolName] || `🔧 ${toolName}`;
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

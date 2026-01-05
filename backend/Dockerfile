@@ -14,8 +14,8 @@ COPY pyproject.toml README.md ./
 # Install uv for faster package installation
 RUN pip install --no-cache-dir uv
 
-# Install dependencies
-RUN uv pip install --system --no-cache -e .
+# Install dependencies (not editable for production)
+RUN uv pip install --system --no-cache .
 
 # Production stage
 FROM python:3.12-slim
@@ -31,8 +31,9 @@ RUN apt-get update && apt-get install -y \
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy application code
+# Copy application code and static files
 COPY src ./src
+COPY static ./static
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
@@ -40,10 +41,6 @@ USER appuser
 
 # Expose port
 EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 
 # Run the application
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
