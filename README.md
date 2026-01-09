@@ -3,7 +3,7 @@
 Microsoft Agent Framework 기반의 AI 리서치 에이전트 시스템으로, 복잡한 질문에 대한 심층 조사를 수행합니다.
 
 >[!NOTE]
-> ag-ui 프로토콜을 사용한 코드는 [feauture/ag-ui](https://github.com/HakjunMIN/deep-research-MAF/tree/feature/ag-ui)
+> ag-ui 프로토콜을 사용한 코드는 [feature/ag-ui](https://github.com/HakjunMIN/deep-research-MAF/tree/feature/ag-ui)
 
 ## 주요 기능
 
