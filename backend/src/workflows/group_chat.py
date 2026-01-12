@@ -11,6 +11,8 @@ This workflow uses GroupChatBuilder to orchestrate agents in sequence:
 import logging
 from typing import Any, Dict, Optional, Callable, List
 
+import asyncio
+
 from agent_framework import (
     GroupChatBuilder,
     GroupChatStateSnapshot,
@@ -157,6 +159,10 @@ class ResearchWorkflow:
             self._shared_state.clear()
             self._shared_state["query"] = query
             self._shared_state["search_sources"] = source_enums
+
+            # Queue for real-time streaming events emitted by agents
+            event_queue: asyncio.Queue = asyncio.Queue()
+            self._shared_state["_event_queue"] = event_queue
             
             # Agent names in order
             agent_names = [
@@ -168,56 +174,79 @@ class ResearchWorkflow:
             
             current_agent_idx = 0
             
-            # Send start event
-            yield {
+            # Push start event
+            await event_queue.put({
                 "type": "workflow_start",
-                "query": query_content
-            }
-            
-            # Run workflow and stream events
-            async for event in self.workflow.run_stream(query_content):
-                event_type = type(event).__name__
-                
-                # Agent started thinking
-                if event_type == 'ExecutorStartedEvent':
-                    if current_agent_idx < len(agent_names):
-                        agent_name = agent_names[current_agent_idx]
-                        yield {
-                            "type": "agent_start",
-                            "agent": agent_name,
-                            "status": "thinking"
-                        }
-                
-                # Agent completed
-                elif event_type == 'ExecutorCompletedEvent':
-                    if current_agent_idx < len(agent_names):
-                        agent_name = agent_names[current_agent_idx]
-                        result_data = getattr(event, 'data', None)
-                        
-                        yield {
-                            "type": "agent_complete",
-                            "agent": agent_name,
-                            "status": "completed"
-                        }
-                        
-                        current_agent_idx += 1
-                        
-                        # Store result in shared state
-                        if agent_name == "Planning Agent" and result_data:
-                            plan = getattr(result_data, 'research_plan', None)
-                            if plan:
-                                yield {
-                                    "type": "plan_created",
-                                    "plan": plan.model_dump(mode='json') if hasattr(plan, 'model_dump') else str(plan)
-                                }
-                        
-                        elif agent_name == "Research Agent" and result_data:
-                            results = getattr(result_data, 'search_results', [])
-                            if results:
-                                yield {
-                                    "type": "research_complete",
-                                    "results_count": len(results)
-                                }
+                "query": query_content,
+            })
+
+            async def _run_group_chat() -> None:
+                nonlocal current_agent_idx
+
+                async for event in self.workflow.run_stream(query_content):
+                    event_type = type(event).__name__
+
+                    # Agent started thinking
+                    if event_type == 'ExecutorStartedEvent':
+                        if current_agent_idx < len(agent_names):
+                            agent_name = agent_names[current_agent_idx]
+                            await event_queue.put({
+                                "type": "agent_start",
+                                "agent": agent_name,
+                                "status": "thinking",
+                            })
+
+                    # Agent completed
+                    elif event_type == 'ExecutorCompletedEvent':
+                        if current_agent_idx < len(agent_names):
+                            agent_name = agent_names[current_agent_idx]
+                            result_data = getattr(event, 'data', None)
+
+                            await event_queue.put({
+                                "type": "agent_complete",
+                                "agent": agent_name,
+                                "status": "completed",
+                            })
+
+                            current_agent_idx += 1
+
+                            # Store result in shared state
+                            if agent_name == "Planning Agent" and result_data:
+                                plan = getattr(result_data, 'research_plan', None)
+                                if plan:
+                                    await event_queue.put({
+                                        "type": "plan_created",
+                                        "plan": plan.model_dump(mode='json') if hasattr(plan, 'model_dump') else str(plan),
+                                    })
+
+                            elif agent_name == "Research Agent" and result_data:
+                                results = getattr(result_data, 'search_results', [])
+                                search_events = getattr(result_data, 'search_events', [])
+                                statistics = getattr(result_data, 'statistics', {})
+                                if results is not None:
+                                    await event_queue.put({
+                                        "type": "research_complete",
+                                        "results_count": len(results),
+                                        "search_events": search_events,
+                                        "statistics": statistics,
+                                    })
+
+            group_chat_task = asyncio.create_task(_run_group_chat())
+
+            # Yield events from the shared queue while the workflow runs
+            while True:
+                if group_chat_task.done() and event_queue.empty():
+                    break
+
+                try:
+                    queued_event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
+
+                yield queued_event
+
+            # Propagate any workflow exception
+            await group_chat_task
             
             # Get final answer from shared state
             synthesized_answer = self._shared_state.get("synthesized_answer")
@@ -238,7 +267,6 @@ class ResearchWorkflow:
                         "content": chunk
                     }
                     # Small delay for streaming effect
-                    import asyncio
                     await asyncio.sleep(0.01)
                 
                 # Send complete answer with metadata

@@ -1,5 +1,6 @@
 """Google Custom Search API service."""
 
+import asyncio
 import os
 from typing import List, Optional
 
@@ -67,34 +68,34 @@ class GoogleSearchService:
         Raises:
             HttpError: If API request fails
         """
-        try:
-            # Execute search
-            result = self.service.cse().list(
-                q=query,
-                cx=self.search_engine_id,
-                num=min(num_results, 10)  # API限制最大10个结果
-            ).execute()
-            
-            # Parse results
-            search_results = []
-            items = result.get("items", [])
-            
-            for item in items:
-                search_result = SearchResult(
-                    query_id=query_id,
-                    source=SearchSource.GOOGLE,
-                    title=item.get("title", ""),
-                    url=item.get("link", ""),
-                    snippet=item.get("snippet", "")
-                )
-                search_results.append(search_result)
-            
-            return search_results
-            
-        except HttpError as e:
-            # Handle rate limiting (429) or other errors
-            error_reason = e.reason if hasattr(e, 'reason') else str(e)
-            raise Exception(f"Google Search API error: {error_reason}") from e
+        def _run_sync() -> List[SearchResult]:
+            try:
+                result = self.service.cse().list(
+                    q=query,
+                    cx=self.search_engine_id,
+                    num=min(num_results, 10),  # API限制最大10个结果
+                ).execute()
+
+                search_results: List[SearchResult] = []
+                items = result.get("items", [])
+
+                for item in items:
+                    search_results.append(
+                        SearchResult(
+                            query_id=query_id,
+                            source=SearchSource.GOOGLE,
+                            title=item.get("title", ""),
+                            url=item.get("link", ""),
+                            snippet=item.get("snippet", ""),
+                        )
+                    )
+
+                return search_results
+            except HttpError as e:
+                error_reason = e.reason if hasattr(e, "reason") else str(e)
+                raise Exception(f"Google Search API error: {error_reason}") from e
+
+        return await asyncio.to_thread(_run_sync)
     
     async def search_with_keywords(
         self,

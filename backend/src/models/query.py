@@ -31,7 +31,7 @@ class ResearchQuery(BaseEntity):
         """Ensure at least one search source is selected."""
         if not v:
             raise ValueError("At least one search source must be selected")
-        valid_sources = {SearchSource.GOOGLE, SearchSource.ARXIV}
+        valid_sources = set(SearchSource)
         for source in v:
             if source not in valid_sources:
                 raise ValueError(f"Invalid search source: {source}")

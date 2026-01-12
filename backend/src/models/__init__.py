@@ -21,6 +21,8 @@ class SearchSource(str, Enum):
     """Available search sources."""
     GOOGLE = "google"
     ARXIV = "arxiv"
+    DUCKDUCKGO = "duckduckgo"
+    BING = "bing"
 
 
 class AgentId(str, Enum):

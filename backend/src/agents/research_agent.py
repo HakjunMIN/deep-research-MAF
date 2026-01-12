@@ -4,12 +4,22 @@ Research Agent - Executes searches and collects information.
 This agent:
 1. Executes the research plan from Planning Agent
 2. Performs Google and arXiv searches
-3. Collects and stores search results
-4. Analyzes relevance of results
+3. Optionally performs DuckDuckGo and Bing searches (controlled via env vars)
+4. Collects and stores search results
+5. Analyzes relevance of results
+
+Environment Variables:
+- ENABLE_GOOGLE_SEARCH: Enable Google Custom Search (default: true)
+- ENABLE_ARXIV_SEARCH: Enable arXiv search (default: true)
+- ENABLE_DUCKDUCKGO_SEARCH: Enable DuckDuckGo search (default: false)
+- ENABLE_BING_SEARCH: Enable Bing Grounding search (default: false)
 """
 
+import asyncio
 import logging
-from typing import Any, Dict, List
+import os
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from agent_framework import AgentRunContext
 
@@ -18,8 +28,6 @@ from ..models import AgentId, SearchSource
 from ..models.research_plan import ResearchPlan
 from ..models.search_result import SearchResult
 from ..services.azure_openai_service import AzureOpenAIService
-from ..services.google_search import GoogleSearchService
-from ..services.arxiv_search import ArxivSearchService
 
 logger = logging.getLogger(__name__)
 
@@ -30,22 +38,97 @@ class ResearchAgent(BaseCustomAgent):
     
     Responsibilities:
     - Execute research plan steps
-    - Perform Google Custom Search
-    - Perform arXiv searches
+    - Perform Google Custom Search (if enabled)
+    - Perform arXiv searches (if enabled)
+    - Perform DuckDuckGo searches (if enabled)
+    - Perform Bing Grounding searches (if enabled)
     - Analyze result relevance
     - Store search results
+    
+    Environment Variables:
+    - ENABLE_GOOGLE_SEARCH: Enable Google Custom Search (default: "true")
+    - ENABLE_ARXIV_SEARCH: Enable arXiv search (default: "true")
+    - ENABLE_DUCKDUCKGO_SEARCH: Enable DuckDuckGo search (default: "false")
+    - ENABLE_BING_SEARCH: Enable Bing Grounding search (default: "false")
     """
     
     def __init__(self):
-        """Initialize Research Agent."""
+        """Initialize Research Agent with configured search services."""
         super().__init__(
             agent_id=AgentId.RESEARCH,
             agent_name="Research Agent",
             agent_description="Executes searches and collects relevant information"
         )
-        self.google_service = GoogleSearchService()
-        self.arxiv_service = ArxivSearchService()
+        
+        # Check which search services to enable via environment variables
+        self.google_enabled = os.getenv("ENABLE_GOOGLE_SEARCH", "true").lower() == "true"
+        self.arxiv_enabled = os.getenv("ENABLE_ARXIV_SEARCH", "true").lower() == "true"
+        self.duckduckgo_enabled = os.getenv("ENABLE_DUCKDUCKGO_SEARCH", "false").lower() == "true"
+        self.bing_enabled = os.getenv("ENABLE_BING_SEARCH", "false").lower() == "true"
+        
+        # Initialize enabled services
+        self.google_service: Optional[Any] = None
+        self.arxiv_service: Optional[Any] = None
+        self.duckduckgo_service: Optional[Any] = None
+        self.bing_service: Optional[Any] = None
+        
+        if self.google_enabled:
+            try:
+                from ..services.google_search import GoogleSearchService
+                self.google_service = GoogleSearchService()
+                logger.info("Google Search service enabled")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Google Search service: {e}")
+                self.google_enabled = False
+        
+        if self.arxiv_enabled:
+            try:
+                from ..services.arxiv_search import ArxivSearchService
+                self.arxiv_service = ArxivSearchService()
+                logger.info("arXiv Search service enabled")
+            except Exception as e:
+                logger.warning(f"Failed to initialize arXiv Search service: {e}")
+                self.arxiv_enabled = False
+        
+        if self.duckduckgo_enabled:
+            try:
+                from ..services.duckduckgo_search import DuckDuckGoSearchService
+                self.duckduckgo_service = DuckDuckGoSearchService()
+                logger.info("DuckDuckGo Search service enabled")
+            except Exception as e:
+                logger.warning(f"Failed to initialize DuckDuckGo Search service: {e}")
+                self.duckduckgo_enabled = False
+        
+        if self.bing_enabled:
+            try:
+                from ..services.bing_grounding_search import BingGroundingSearchService
+                self.bing_service = BingGroundingSearchService()
+                logger.info("Bing Grounding Search service enabled")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Bing Grounding Search service: {e}")
+                self.bing_enabled = False
+        
         self.openai_service = AzureOpenAIService()
+
+        # Concurrency controls (protects external APIs + speeds up overall runtime)
+        # Note: search services may have their own rate limits; keep these modest.
+        self.search_concurrency = max(1, int(os.getenv("SEARCH_CONCURRENCY", "4")))
+        self.scoring_concurrency = max(1, int(os.getenv("RELEVANCE_SCORING_CONCURRENCY", "6")))
+        
+        # Store search events for streaming to frontend
+        self.search_events: List[Dict[str, Any]] = []
+        
+        # Log enabled services
+        enabled_services = []
+        if self.google_enabled:
+            enabled_services.append("Google")
+        if self.arxiv_enabled:
+            enabled_services.append("arXiv")
+        if self.duckduckgo_enabled:
+            enabled_services.append("DuckDuckGo")
+        if self.bing_enabled:
+            enabled_services.append("Bing")
+        logger.info(f"Research Agent initialized with services: {', '.join(enabled_services) or 'None'}")
     
     async def execute(self, context: AgentRunContext) -> Dict[str, Any]:
         """
@@ -59,6 +142,9 @@ class ResearchAgent(BaseCustomAgent):
         """
         try:
             logger.info("ResearchAgent.execute started")
+            # Clear search events for new execution
+            self.search_events = []
+            
             # Get research plan from context
             research_plan: ResearchPlan = self.get_shared_state(context, "research_plan")
             query = self.get_shared_state(context, "query")
@@ -106,7 +192,8 @@ class ResearchAgent(BaseCustomAgent):
             result = {
                 "search_results": scored_results,
                 "total_results": len(scored_results),
-                "statistics": stats
+                "statistics": stats,
+                "search_events": self.search_events  # Include search events for frontend
             }
             logger.info(f"ResearchAgent.execute completed. Total results: {len(scored_results)}")
             return result
@@ -136,31 +223,85 @@ class ResearchAgent(BaseCustomAgent):
         
         # Combine keywords for search
         search_query = " ".join(step.keywords)
-        
-        # Execute searches based on sources
-        for source in step.sources:
-            if source == SearchSource.GOOGLE:
+
+        search_semaphore = asyncio.Semaphore(self.search_concurrency)
+
+        async def run_source(source: SearchSource) -> List[SearchResult]:
+            async with search_semaphore:
+                if source == SearchSource.GOOGLE and self.google_enabled and self.google_service:
+                    tool_name = "Google"
+                    self.log_step(f"🔍 Google 검색: {search_query}")
+                elif source == SearchSource.ARXIV and self.arxiv_enabled and self.arxiv_service:
+                    tool_name = "arXiv"
+                    self.log_step(f"📚 arXiv 검색: {search_query}")
+                elif source == SearchSource.DUCKDUCKGO and self.duckduckgo_enabled and self.duckduckgo_service:
+                    tool_name = "DuckDuckGo"
+                    self.log_step(f"🦆 DuckDuckGo 검색: {search_query}")
+                elif source == SearchSource.BING and self.bing_enabled and self.bing_service:
+                    tool_name = "Bing"
+                    self.log_step(f"🔎 Bing 검색: {search_query}")
+                else:
+                    return []
+
+                event_id = str(uuid4())
+                event: Dict[str, Any] = {
+                    "id": event_id,
+                    "tool": tool_name,
+                    "query": search_query,
+                    "keywords": step.keywords,
+                    "status": "searching",
+                }
+                self.search_events.append(event)
+                await self.emit_event({"type": "search_event", **event})
+
                 try:
-                    google_results = await self.google_service.search(
-                        query=search_query,
-                        query_id=query_id
-                    )
-                    # Results already have query_id set
-                    results.extend(google_results)
+                    if tool_name == "Google":
+                        source_results = await self.google_service.search(
+                            query=search_query,
+                            query_id=query_id,
+                        )
+                    elif tool_name == "arXiv":
+                        source_results = await self.arxiv_service.search_with_keywords(
+                            query_id=query_id,
+                            keywords=step.keywords,
+                            max_results=5,
+                        )
+                    elif tool_name == "DuckDuckGo":
+                        source_results = await self.duckduckgo_service.search_with_keywords(
+                            query_id=query_id,
+                            keywords=step.keywords,
+                            max_results=10,
+                        )
+                    else:  # Bing
+                        source_results = await self.bing_service.search_with_keywords(
+                            query_id=query_id,
+                            keywords=step.keywords,
+                            max_results=10,
+                        )
+                    event["status"] = "completed"
+                    event["results_count"] = len(source_results)
+                    event["results"] = [
+                        {"title": str(r.title), "url": str(r.url), "snippet": str(r.snippet)}
+                        for r in source_results[:3]
+                    ]
+                    await self.emit_event({"type": "search_event", **event})
+                    return source_results
                 except Exception as e:
-                    logger.error(f"{self.agent_id.value}: Google search failed for query {query_id}: {str(e)}", exc_info=True)
-            
-            elif source == SearchSource.ARXIV:
-                try:
-                    arxiv_results = await self.arxiv_service.search_with_keywords(
-                        query_id=query_id,
-                        keywords=step.keywords,
-                        max_results=5
+                    event["status"] = "failed"
+                    event["error"] = str(e)
+                    await self.emit_event({"type": "search_event", **event})
+                    logger.error(
+                        f"{self.agent_id.value}: {tool_name} search failed for query {query_id}: {str(e)}",
+                        exc_info=True,
                     )
-                    # Results already have query_id set
-                    results.extend(arxiv_results)
-                except Exception as e:
-                    logger.error(f"{self.agent_id.value}: arXiv search failed for query {query_id}: {str(e)}", exc_info=True)
+                    return []
+
+        # Execute enabled sources concurrently (bounded)
+        tasks = [run_source(source) for source in step.sources]
+        if tasks:
+            per_source_results = await asyncio.gather(*tasks)
+            for chunk in per_source_results:
+                results.extend(chunk)
         
         return results
     
@@ -179,23 +320,29 @@ class ResearchAgent(BaseCustomAgent):
         Returns:
             Results with updated relevance_score
         """
-        for result in results:
-            try:
-                # Use OpenAI to analyze relevance
-                score = await self.openai_service.analyze_relevance(
-                    query=query,
-                    title=result.title,
-                    snippet=result.snippet
-                )
-                result.relevance_score = score
-            except Exception as e:
-                # Fallback: basic keyword matching
-                result.relevance_score = self._basic_relevance_score(
-                    query,
-                    result.title,
-                    result.snippet
-                )
-                logger.error(f"{self.agent_id.value}: Relevance scoring failed for query {result.query_id}, using fallback: {str(e)}", exc_info=True)
+        scoring_semaphore = asyncio.Semaphore(self.scoring_concurrency)
+
+        async def score_one(result: SearchResult) -> None:
+            async with scoring_semaphore:
+                try:
+                    score = await self.openai_service.analyze_relevance(
+                        query=query,
+                        title=result.title,
+                        snippet=result.snippet,
+                    )
+                    result.relevance_score = score
+                except Exception as e:
+                    result.relevance_score = self._basic_relevance_score(
+                        query,
+                        result.title,
+                        result.snippet,
+                    )
+                    logger.error(
+                        f"{self.agent_id.value}: Relevance scoring failed for query {result.query_id}, using fallback: {str(e)}",
+                        exc_info=True,
+                    )
+
+        await asyncio.gather(*(score_one(r) for r in results))
         
         return results
     
@@ -254,12 +401,16 @@ class ResearchAgent(BaseCustomAgent):
                 "total": 0,
                 "google": 0,
                 "arxiv": 0,
+                "duckduckgo": 0,
+                "bing": 0,
                 "avg_relevance": 0.0,
                 "high_relevance_count": 0
             }
         
         google_count = sum(1 for r in results if r.source == SearchSource.GOOGLE)
         arxiv_count = sum(1 for r in results if r.source == SearchSource.ARXIV)
+        duckduckgo_count = sum(1 for r in results if r.source == SearchSource.DUCKDUCKGO)
+        bing_count = sum(1 for r in results if r.source == SearchSource.BING)
         
         avg_relevance = sum(r.relevance_score for r in results) / len(results)
         high_relevance = sum(1 for r in results if r.relevance_score >= 0.7)
@@ -268,6 +419,8 @@ class ResearchAgent(BaseCustomAgent):
             "total": len(results),
             "google": google_count,
             "arxiv": arxiv_count,
+            "duckduckgo": duckduckgo_count,
+            "bing": bing_count,
             "avg_relevance": round(avg_relevance, 2),
             "high_relevance_count": high_relevance
         }

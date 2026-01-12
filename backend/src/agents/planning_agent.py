@@ -1,15 +1,14 @@
-"""
-Planning Agent - Analyzes user query and creates research strategy.
+"""Planning Agent - Analyzes user query and creates research strategy.
 
 This agent:
 1. Analyzes the user's research question
 2. Generates relevant search keywords
 3. Creates a structured research plan with search steps
-4. Determines which sources to use (Google, arXiv)
+4. Determines which sources to use (Google, arXiv, DuckDuckGo, Bing)
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from agent_framework import AgentRunContext
 
@@ -84,7 +83,11 @@ class PlanningAgent(BaseCustomAgent):
             
             # Step 2: Determine sources
             self.log_step("🎯 Determining optimal search sources...")
-            sources = await self._determine_sources(query_content, keywords)
+            sources = await self._determine_sources(
+                query_content,
+                keywords,
+                allowed_sources=getattr(query, "search_sources", None),
+            )
             self.log_step(f"✓ Selected sources: {', '.join([s.value for s in sources])}")
             
             # Step 3: Create search steps
@@ -139,7 +142,8 @@ class PlanningAgent(BaseCustomAgent):
     async def _determine_sources(
         self,
         query: str,
-        keywords: List[str]
+        keywords: List[str],
+        allowed_sources: Optional[List[Any]] = None,
     ) -> List[SearchSource]:
         """
         Determine which sources to search based on query content.
@@ -148,6 +152,12 @@ class PlanningAgent(BaseCustomAgent):
             query: User's research question
             keywords: Generated keywords
             
+        Args:
+            query: User's research question
+            keywords: Generated keywords
+            allowed_sources: Optional list of sources allowed by the user/API request.
+                May contain SearchSource enums or their string values.
+
         Returns:
             List of SearchSource enums
         """
@@ -167,13 +177,43 @@ class PlanningAgent(BaseCustomAgent):
             for indicator in academic_indicators
         )
         
-        # Default: search arXiv
-        sources = [SearchSource.ARXIV]
-        
-        # Add Google for non-academic queries
-        if not is_academic:
-            sources.append(SearchSource.GOOGLE)
-        
+        # Normalize allowed sources (ResearchQuery uses_enum_values=True, so may be strings)
+        allowed: set[SearchSource] = set()
+        if allowed_sources:
+            for src in allowed_sources:
+                try:
+                    allowed.add(src if isinstance(src, SearchSource) else SearchSource(str(src).replace("SearchSource.", "")))
+                except Exception:
+                    continue
+
+        # If nothing was provided/parsed, fall back to a sensible default
+        if not allowed:
+            allowed = {SearchSource.ARXIV}
+
+        sources: List[SearchSource] = []
+
+        # Preference based on heuristic, but only if allowed
+        if is_academic:
+            if SearchSource.ARXIV in allowed:
+                sources.append(SearchSource.ARXIV)
+        else:
+            if SearchSource.GOOGLE in allowed:
+                sources.append(SearchSource.GOOGLE)
+
+        # Always include optional web tools if the user allowed them
+        if SearchSource.DUCKDUCKGO in allowed:
+            sources.append(SearchSource.DUCKDUCKGO)
+        if SearchSource.BING in allowed:
+            sources.append(SearchSource.BING)
+
+        # Fallback: ensure at least one source
+        if not sources:
+            # Deterministic preference order
+            for candidate in (SearchSource.ARXIV, SearchSource.GOOGLE, SearchSource.DUCKDUCKGO, SearchSource.BING):
+                if candidate in allowed:
+                    sources.append(candidate)
+                    break
+
         return sources
     
     async def _create_search_steps(

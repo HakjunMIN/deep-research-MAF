@@ -7,6 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "agent-framework>=1.0.0b251112.post1",
     "arxiv>=2.3.1",
+    "azure-ai-projects>=1.0.0b9",
+    "azure-identity>=1.21.0",
+    "ddgs>=0.2.0",
     "fastapi>=0.121.2",
     "google-api-python-client>=2.187.0",
     "openai>=2.8.0",

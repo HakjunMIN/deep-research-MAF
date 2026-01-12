@@ -1,7 +1,6 @@
 """arXiv API search service."""
 
 import asyncio
-from datetime import datetime
 from typing import List, Optional
 
 import arxiv
@@ -78,26 +77,24 @@ class ArxivSearchService:
             sort_by=sort_by
         )
         
-        # Execute search and parse results
-        search_results = []
-        
-        for result in search.results():
-            # Extract authors
-            authors = [author.name for author in result.authors]
-            
-            # Convert to SearchResult model
-            search_result = SearchResult(
-                query_id=query_id,
-                source=SearchSource.ARXIV,
-                title=result.title,
-                url=result.entry_id,  # arXiv paper URL
-                snippet=result.summary[:500] if result.summary else "",  # Limit snippet length
-                authors=authors,
-                published_date=result.published
-            )
-            search_results.append(search_result)
-        
-        return search_results
+        def _run_sync() -> List[SearchResult]:
+            search_results: List[SearchResult] = []
+            for result in search.results():
+                authors = [author.name for author in result.authors]
+                search_results.append(
+                    SearchResult(
+                        query_id=query_id,
+                        source=SearchSource.ARXIV,
+                        title=result.title,
+                        url=result.entry_id,
+                        snippet=result.summary[:500] if result.summary else "",
+                        authors=authors,
+                        published_date=result.published,
+                    )
+                )
+            return search_results
+
+        return await asyncio.to_thread(_run_sync)
     
     async def search_with_keywords(
         self,

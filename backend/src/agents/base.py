@@ -10,7 +10,7 @@ This module provides the base class for all 4 custom agents:
 
 import logging
 from abc import abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from agent_framework import BaseAgent, AgentRunContext
 
@@ -186,6 +186,23 @@ class BaseCustomAgent(BaseAgent):
             step_description: Description of the current step
         """
         logger.info(f"{self.agent_id.value}: {step_description}")
+
+    async def emit_event(self, event: Dict[str, Any]) -> None:
+        """Emit a real-time event into the workflow stream (if enabled).
+
+        The workflow may place an asyncio.Queue into shared state under
+        the private key "_event_queue". When present, agents can push
+        structured events (dicts) for the streaming API to forward to
+        the frontend.
+        """
+        queue: Optional[Any] = self._workflow_state.get("_event_queue")
+        if queue is None:
+            return
+
+        try:
+            queue.put_nowait(event)
+        except Exception:
+            await queue.put(event)
     
     def get_shared_state(
         self,

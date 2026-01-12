@@ -2,6 +2,7 @@ import type { Message } from '../types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import { useState } from 'react';
 
 interface MessageBubbleProps {
   message: Message;
@@ -9,6 +10,7 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const [showAllSources, setShowAllSources] = useState(false);
   
   return (
     <div 
@@ -84,7 +86,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             <div className="flex flex-col gap-1 text-xs text-gray-500 max-w-2xl">
               <span className="font-semibold">📚 Sources ({message.sources.length})</span>
               <div className="flex flex-col gap-1">
-                {message.sources.slice(0, 3).map((source, idx) => (
+                {(showAllSources ? message.sources : message.sources.slice(0, 3)).map((source, idx) => (
                   <a
                     key={idx}
                     href={source.url}
@@ -95,6 +97,14 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                     {source.title}
                   </a>
                 ))}
+                {message.sources.length > 3 && (
+                  <button
+                    onClick={() => setShowAllSources(!showAllSources)}
+                    className="text-blue-600 hover:text-blue-800 hover:underline text-left font-medium"
+                  >
+                    {showAllSources ? '▲ Show less' : `▼ Show all ${message.sources.length} sources`}
+                  </button>
+                )}
               </div>
             </div>
           )}

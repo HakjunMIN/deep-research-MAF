@@ -1,9 +1,14 @@
 """Azure OpenAI Service client for LLM interactions."""
 
+import asyncio
 import os
 from typing import Any, Dict, List, Optional
 
 from openai import AzureOpenAI
+try:
+    from openai import AsyncAzureOpenAI
+except Exception:  # pragma: no cover
+    AsyncAzureOpenAI = None  # type: ignore
 from openai.types.chat import ChatCompletion
 
 
@@ -45,12 +50,22 @@ class AzureOpenAIService:
             raise ValueError("Azure OpenAI endpoint is required")
         if not self.deployment_name:
             raise ValueError("Azure OpenAI deployment name is required")
-        
-        self.client = AzureOpenAI(
-            api_key=self.api_key,
-            api_version=self.api_version,
-            azure_endpoint=self.endpoint
-        )
+
+        self._async_client = None
+        self._sync_client = None
+
+        if AsyncAzureOpenAI is not None:
+            self._async_client = AsyncAzureOpenAI(
+                api_key=self.api_key,
+                api_version=self.api_version,
+                azure_endpoint=self.endpoint,
+            )
+        else:
+            self._sync_client = AzureOpenAI(
+                api_key=self.api_key,
+                api_version=self.api_version,
+                azure_endpoint=self.endpoint,
+            )
     
     async def chat_completion(
         self,
@@ -71,14 +86,34 @@ class AzureOpenAIService:
         Returns:
             ChatCompletion response
         """
-        response = self.client.chat.completions.create(
-            model=self.deployment_name,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **kwargs
-        )
-        return response
+        if self._async_client is not None:
+            response = await self._async_client.chat.completions.create(
+                model=self.deployment_name,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs,
+            )
+            return response
+
+        # Fallback: sync client executed in a thread to avoid blocking the event loop
+        if self._sync_client is None:
+            self._sync_client = AzureOpenAI(
+                api_key=self.api_key,
+                api_version=self.api_version,
+                azure_endpoint=self.endpoint,
+            )
+
+        def _call_sync() -> ChatCompletion:
+            return self._sync_client.chat.completions.create(
+                model=self.deployment_name,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs,
+            )
+
+        return await asyncio.to_thread(_call_sync)
     
     async def extract_text(self, response: ChatCompletion) -> str:
         """

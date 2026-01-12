@@ -26,6 +26,13 @@ class CustomJSONEncoder(json.JSONEncoder):
             return str(obj)
         if isinstance(obj, datetime):
             return obj.isoformat()
+        # Pydantic URL types (HttpUrl/AnyUrl) may appear in models and need stringification
+        module = getattr(obj.__class__, "__module__", "")
+        name = getattr(obj.__class__, "__name__", "")
+        if (module.startswith("pydantic_core") and name == "Url") or (
+            module.startswith("pydantic") and name.endswith("Url")
+        ):
+            return str(obj)
         return super().default(obj)
 
 # Router instance
