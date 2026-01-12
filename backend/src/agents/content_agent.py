@@ -74,7 +74,7 @@ class ContentWritingAgent(BaseCustomAgent):
             # Step 1: Prepare sources and citations
             self.log_step("📚 Preparing sources and citations...")
             sources = self._prepare_sources(search_results)
-            self.log_step(f"✓ Prepared {len(sources)} sources")
+            self.log_step(f"✓ Prepared {len(sources)} unique sources")
             
             # Step 2: Generate answer content
             self.log_step("✍️ Generating comprehensive answer content...")
@@ -92,7 +92,7 @@ class ContentWritingAgent(BaseCustomAgent):
             
             # Step 4: Generate metadata
             self.log_step("✅ Finalizing answer with metadata...")
-            metadata = self._create_metadata(search_results, answer_content)
+            metadata = self._create_metadata(search_results, answer_content, len(sources))
             
             # Create synthesized answer
             synthesized_answer = SynthesizedAnswer(
@@ -130,7 +130,7 @@ class ContentWritingAgent(BaseCustomAgent):
             results: Search results
             
         Returns:
-            List of SourceCitation instances
+            List of SourceCitation instances (unique URLs only)
         """
         # Sort by relevance score
         sorted_results = sorted(
@@ -139,16 +139,29 @@ class ContentWritingAgent(BaseCustomAgent):
             reverse=True
         )
         
-        # Create citations (limit to top 10 sources)
+        # Create citations, removing duplicates by URL
         citations = []
-        for idx, result in enumerate(sorted_results[:10], start=1):
+        seen_urls = set()
+        citation_num = 1
+        
+        for result in sorted_results:
+            # Skip if URL already seen
+            if result.url in seen_urls:
+                continue
+            
+            seen_urls.add(result.url)
             citation = SourceCitation(
                 id=str(result.id),
                 title=result.title,
                 url=result.url,
-                citation_number=idx
+                citation_number=citation_num
             )
             citations.append(citation)
+            citation_num += 1
+            
+            # Limit to top 10 unique sources
+            if len(citations) >= 10:
+                break
         
         return citations
     
@@ -314,7 +327,8 @@ Generate the answer:"""
     def _create_metadata(
         self,
         results: List[SearchResult],
-        content: str
+        content: str,
+        unique_source_count: int
     ) -> AnswerMetadata:
         """
         Create metadata for the answer.
@@ -322,6 +336,7 @@ Generate the answer:"""
         Args:
             results: Search results
             content: Generated content
+            unique_source_count: Number of unique sources actually used
             
         Returns:
             AnswerMetadata instance
@@ -337,7 +352,7 @@ Generate the answer:"""
         word_count = len(content.split())
         
         return AnswerMetadata(
-            total_sources=len(results),
+            total_sources=unique_source_count,  # Use actual unique sources count
             google_sources=google_count,
             arxiv_sources=arxiv_count,
             word_count=word_count,
