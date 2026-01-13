@@ -85,6 +85,12 @@ export function ChatInterface() {
             setStatusMessage(`✅ ${event.agent}: Completed`);
             break;
           
+          case 'agent_step':
+            if (event.step) {
+              setStatusMessage(event.step);
+            }
+            break;
+          
           case 'plan_created':
             setStatusMessage('📋 Research plan created');
             break;
@@ -256,22 +262,22 @@ export function ChatInterface() {
               </p>
               <div className="flex flex-col gap-3 w-full max-w-md">
                 <button
-                  onClick={() => setInput("What are the latest developments in quantum computing?")}
+                  onClick={() => setInput("AI 에이전트의 최신 발전 동향은?")}
                   className="px-6 py-3 bg-white border border-gray-300 rounded-xl text-left hover:bg-gray-50 transition-colors shadow-sm"
                 >
-                  <span className="text-gray-700">What are the latest developments in quantum computing?</span>
+                  <span className="text-gray-700">AI 에이전트의 최신 발전 동향은?</span>
                 </button>
                 <button
-                  onClick={() => setInput("Explain the impact of AI on healthcare")}
+                  onClick={() => setInput("멀티 에이전트 시스템의 장단점을 설명해줘")}
                   className="px-6 py-3 bg-white border border-gray-300 rounded-xl text-left hover:bg-gray-50 transition-colors shadow-sm"
                 >
-                  <span className="text-gray-700">Explain the impact of AI on healthcare</span>
+                  <span className="text-gray-700">멀티 에이전트 시스템의 장단점을 설명해줘</span>
                 </button>
                 <button
-                  onClick={() => setInput("What is the current state of renewable energy?")}
+                  onClick={() => setInput("LLM 기반 에이전트 프레임워크 비교 분석")}
                   className="px-6 py-3 bg-white border border-gray-300 rounded-xl text-left hover:bg-gray-50 transition-colors shadow-sm"
                 >
-                  <span className="text-gray-700">What is the current state of renewable energy?</span>
+                  <span className="text-gray-700">LLM 기반 에이전트 프레임워크 비교 분석</span>
                 </button>
               </div>
             </div>
@@ -361,8 +367,8 @@ export function ChatInterface() {
 
                 return messages.map((message, idx) => (
                   <Fragment key={message.id}>
-                    {shouldRenderStatus && idx === (insertIdx === -1 ? 0 : insertIdx) && StatusPanel}
                     {shouldRenderPanel && idx === (insertIdx === -1 ? 0 : insertIdx) && SearchPanel}
+                    {shouldRenderStatus && idx === (insertIdx === -1 ? 0 : insertIdx) && StatusPanel}
                     <MessageBubble message={message} />
                   </Fragment>
                 ));

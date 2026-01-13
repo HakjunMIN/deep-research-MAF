@@ -153,7 +153,14 @@ class BingGroundingSearchService:
             except Exception as e:
                 raise Exception(f"Bing Grounding Search error: {str(e)}") from e
 
-        return await asyncio.to_thread(_run_sync)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(_run_sync),
+                timeout=30.0  
+            )
+        except asyncio.TimeoutError:
+            logger.error("Bing Grounding Search timeout after 30 seconds for query: %s", query)
+            raise Exception("Bing Grounding Search timeout after 30 seconds")
     
     async def search_with_keywords(
         self,

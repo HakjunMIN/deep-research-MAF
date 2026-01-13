@@ -28,10 +28,11 @@ export interface SearchEvent {
 }
 
 export interface StreamEvent {
-  type: 'workflow_start' | 'agent_start' | 'agent_complete' | 'plan_created' | 
+  type: 'workflow_start' | 'agent_start' | 'agent_complete' | 'agent_step' | 'plan_created' | 
         'research_complete' | 'search_event' | 'answer_start' | 'answer_chunk' | 'answer_complete' | 
         'workflow_complete' | 'error';
   agent?: string;
+  step?: string;
   plan?: {
     keywords: string[];
   };

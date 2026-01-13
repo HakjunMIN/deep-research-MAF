@@ -16,7 +16,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     <div 
       className={`flex w-full animate-slide-up ${isUser ? 'justify-end' : 'justify-start'}`}
     >
-      <div className={`flex gap-3 max-w-3xl ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+      <div className={`flex gap-3 ${isUser ? 'max-w-3xl flex-row-reverse' : 'w-full flex-row'}`}>
         {/* Avatar */}
         <div 
           className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white font-semibold text-sm ${
@@ -27,9 +27,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         </div>
         
         {/* Message Content */}
-        <div className={`flex flex-col gap-2 ${isUser ? 'items-end' : 'items-start'}`}>
+        <div className={`flex flex-col gap-2 ${isUser ? 'items-end' : 'items-start'} ${isUser ? '' : 'flex-1'}`}>
           <div 
-            className={`rounded-2xl px-4 py-3 max-w-2xl ${
+            className={`rounded-2xl px-4 py-3 ${isUser ? 'max-w-2xl' : 'max-w-5xl'} ${
               isUser 
                 ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white' 
                 : 'bg-white border border-gray-200 text-gray-800 shadow-sm'
@@ -83,7 +83,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           
           {/* Sources */}
           {message.sources && message.sources.length > 0 && (
-            <div className="flex flex-col gap-1 text-xs text-gray-500 max-w-2xl">
+            <div className={`flex flex-col gap-1 text-xs text-gray-500 ${isUser ? 'max-w-2xl' : 'max-w-5xl'}`}>
               <span className="font-semibold">📚 Sources ({message.sources.length})</span>
               <div className="flex flex-col gap-1">
                 {(showAllSources ? message.sources : message.sources.slice(0, 3)).map((source, idx) => (

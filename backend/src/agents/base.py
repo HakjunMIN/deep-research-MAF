@@ -266,7 +266,109 @@ class BaseCustomAgent(ChatAgent):
             role="assistant",
             additional_properties=result if isinstance(result, dict) else {"data": result}
         )
+    
+    def get_new_thread(self):
+        """
+        Create a new thread for this agent.
+        Required by AgentProtocol but not used in group chat context.
+        
+        Returns:
+            None - group chat manages threads
+        """
+        return None
+    
+    @abstractmethod
+    async def execute(self, context: AgentRunContext) -> Dict[str, Any]:
+        """
+        Agent-specific execution logic.
+        
+        Must be implemented by subclasses.
+        
+        Args:
+            context: Agent execution context with shared state
+            
+        Returns:
+            Agent-specific result dictionary
+        """
+        pass
+    
+    def log_step(self, step_description: str) -> None:
+        """
+        Log a step in the agent's execution and emit event for streaming.
+        
+        Args:
+            step_description: Description of the current step
+        """
+        logger.info(f"{self.agent_id.value}: {step_description}")
+        
+        # Emit event for streaming to frontend
+        import asyncio
+        try:
+            # Try to get the running event loop
+            loop = asyncio.get_running_loop()
+            # Create a task to emit the event
+            loop.create_task(self.emit_event({
+                "type": "agent_step",
+                "agent": self.agent_id.value,
+                "step": step_description
+            }))
+        except RuntimeError:
+            # No event loop running (sync context), skip streaming
+            pass
 
+    async def emit_event(self, event: Dict[str, Any]) -> None:
+        """Emit a real-time event into the workflow stream (if enabled).
+
+        The workflow may place an asyncio.Queue into shared state under
+        the private key "_event_queue". When present, agents can push
+        structured events (dicts) for the streaming API to forward to
+        the frontend.
+        """
+        queue: Optional[Any] = self._workflow_state.get("_event_queue")
+        if queue is None:
+            return
+
+        try:
+            queue.put_nowait(event)
+        except Exception:
+            await queue.put(event)
+    
+    def get_shared_state(
+        self,
+        context,
+        key: str,
+        default: Any = None
+    ) -> Any:
+        """
+        Get value from shared state.
+        
+        Args:
+            context: Agent execution context (not used, state comes from workflow)
+            key: State key
+            default: Default value if key not found
+            
+        Returns:
+            Value from shared state or default
+        """
+        # Use workflow state instead of context state
+        return self._workflow_state.get(key, default)
+    
+    def set_shared_state(
+        self,
+        context,
+        key: str,
+        value: Any
+    ) -> None:
+        """
+        Set value in shared state.
+        
+        Args:
+            context: Agent execution context (not used, state comes from workflow)
+            key: State key
+            value: Value to store
+        """
+        # Use workflow state instead of context state
+        self._workflow_state[key] = value
     
 # Export base class
 __all__ = ["BaseCustomAgent", "create_azure_chat_client"]
