@@ -57,13 +57,7 @@ class ResearchAgent(BaseCustomAgent):
         super().__init__(
             agent_id=AgentId.RESEARCH,
             agent_name="Research Agent",
-            agent_description="Executes searches and collects relevant information",
-            instructions="""You are a Research Agent. Your role is to:
-1. Execute research plans from the Planning Agent
-2. Perform searches across multiple sources (Google, arXiv, DuckDuckGo, Bing)
-3. Collect and organize search results
-4. Analyze relevance of each result
-5. Store high-quality results for synthesis"""
+            agent_description="Executes searches and collects relevant information"
         )
         
         # Check which search services to enable via environment variables
@@ -237,15 +231,31 @@ class ResearchAgent(BaseCustomAgent):
                 if source == SearchSource.GOOGLE and self.google_enabled and self.google_service:
                     tool_name = "Google"
                     self.log_step(f"🔍 Google 검색: {search_query}")
+                    runner = lambda: self.google_service.search(query=search_query, query_id=query_id)
                 elif source == SearchSource.ARXIV and self.arxiv_enabled and self.arxiv_service:
                     tool_name = "arXiv"
                     self.log_step(f"📚 arXiv 검색: {search_query}")
+                    runner = lambda: self.arxiv_service.search_with_keywords(
+                        query_id=query_id,
+                        keywords=step.keywords,
+                        max_results=5,
+                    )
                 elif source == SearchSource.DUCKDUCKGO and self.duckduckgo_enabled and self.duckduckgo_service:
                     tool_name = "DuckDuckGo"
                     self.log_step(f"🦆 DuckDuckGo 검색: {search_query}")
+                    runner = lambda: self.duckduckgo_service.search_with_keywords(
+                        query_id=query_id,
+                        keywords=step.keywords,
+                        max_results=10,
+                    )
                 elif source == SearchSource.BING and self.bing_enabled and self.bing_service:
                     tool_name = "Bing"
                     self.log_step(f"🔎 Bing 검색: {search_query}")
+                    runner = lambda: self.bing_service.search_with_keywords(
+                        query_id=query_id,
+                        keywords=step.keywords,
+                        max_results=10,
+                    )
                 else:
                     return []
 
@@ -261,29 +271,7 @@ class ResearchAgent(BaseCustomAgent):
                 await self.emit_event({"type": "search_event", **event})
 
                 try:
-                    if tool_name == "Google":
-                        source_results = await self.google_service.search(
-                            query=search_query,
-                            query_id=query_id,
-                        )
-                    elif tool_name == "arXiv":
-                        source_results = await self.arxiv_service.search_with_keywords(
-                            query_id=query_id,
-                            keywords=step.keywords,
-                            max_results=5,
-                        )
-                    elif tool_name == "DuckDuckGo":
-                        source_results = await self.duckduckgo_service.search_with_keywords(
-                            query_id=query_id,
-                            keywords=step.keywords,
-                            max_results=10,
-                        )
-                    else:  # Bing
-                        source_results = await self.bing_service.search_with_keywords(
-                            query_id=query_id,
-                            keywords=step.keywords,
-                            max_results=10,
-                        )
+                    source_results: List[SearchResult] = await runner()
                     event["status"] = "completed"
                     event["results_count"] = len(source_results)
                     event["results"] = [

@@ -1,14 +1,8 @@
-"""Bing Grounding Search service using Azure AI Projects.
-
-Note: The OpenAI Responses payload shape can vary between SDK versions
-(`output` vs `output_items`). Parsing must be tolerant to avoid silently
-returning 0 results.
-"""
+"""Bing Grounding Search service using Azure AI Projects."""
 
 import asyncio
-import logging
 import os
-from typing import Any, Dict, Iterable, List, Optional
+from typing import List, Optional
 
 from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import (
@@ -20,8 +14,6 @@ from azure.identity import DefaultAzureCredential
 
 from ..models.search_result import SearchResult
 from ..models import SearchSource, UUID
-
-logger = logging.getLogger(__name__)
 
 
 class BingGroundingSearchService:
@@ -73,78 +65,6 @@ class BingGroundingSearchService:
         self.bing_connection = self.client.connections.get(
             name=self.bing_connection_name
         )
-
-    @staticmethod
-    def _to_builtin(obj: Any) -> Any:
-        """Best-effort conversion to JSON-like builtins."""
-        if obj is None:
-            return None
-        if isinstance(obj, (str, int, float, bool)):
-            return obj
-        if isinstance(obj, dict):
-            return {str(k): BingGroundingSearchService._to_builtin(v) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple)):
-            return [BingGroundingSearchService._to_builtin(v) for v in obj]
-
-        model_dump = getattr(obj, "model_dump", None)
-        if callable(model_dump):
-            try:
-                return BingGroundingSearchService._to_builtin(model_dump())
-            except Exception:
-                pass
-
-        to_dict = getattr(obj, "to_dict", None)
-        if callable(to_dict):
-            try:
-                return BingGroundingSearchService._to_builtin(to_dict())
-            except Exception:
-                pass
-
-        d = getattr(obj, "__dict__", None)
-        if isinstance(d, dict) and d:
-            return BingGroundingSearchService._to_builtin(d)
-
-        return str(obj)
-
-    @staticmethod
-    def _walk(obj: Any) -> Iterable[Dict[str, Any]]:
-        if isinstance(obj, dict):
-            yield obj
-            for v in obj.values():
-                yield from BingGroundingSearchService._walk(v)
-        elif isinstance(obj, list):
-            for v in obj:
-                yield from BingGroundingSearchService._walk(v)
-
-    @staticmethod
-    def _extract_output_text(data: Any) -> str:
-        texts: List[str] = []
-        for node in BingGroundingSearchService._walk(data):
-            if node.get("type") == "output_text" and isinstance(node.get("text"), str):
-                texts.append(node["text"])
-        return "\n".join(t for t in texts if t).strip()
-
-    @staticmethod
-    def _extract_url_citations(data: Any) -> List[Dict[str, str]]:
-        citations: List[Dict[str, str]] = []
-        for node in BingGroundingSearchService._walk(data):
-            if node.get("type") == "url_citation" and isinstance(node.get("url"), str):
-                citations.append({"url": node["url"], "title": str(node.get("title") or "")})
-                continue
-
-            inner = node.get("url_citation")
-            if isinstance(inner, dict) and isinstance(inner.get("url"), str):
-                citations.append({"url": inner["url"], "title": str(inner.get("title") or "")})
-
-        seen: set[str] = set()
-        deduped: List[Dict[str, str]] = []
-        for c in citations:
-            url = c.get("url")
-            if not url or url in seen:
-                continue
-            seen.add(url)
-            deduped.append(c)
-        return deduped
     
     async def search(
         self,
@@ -199,49 +119,38 @@ class BingGroundingSearchService:
                         tool_choice="required",
                     )
 
-                    data = self._to_builtin(response)
-
-                    # Prefer SDK convenience field if available, otherwise extract from content blocks
-                    output_text = getattr(response, "output_text", None)
-                    if not isinstance(output_text, str) or not output_text.strip():
-                        output_text = self._extract_output_text(data)
-
-                    citations = self._extract_url_citations(data)
-                    if not citations:
-                        logger.warning(
-                            "Bing grounding returned 0 citations. "
-                            "If you expected results, verify ENABLE_BING_SEARCH=true, "
-                            "AZURE_AI_PROJECT_ENDPOINT/BING_GROUNDING_CONNECTION_NAME, and Azure credentials. "
-                            "Response top-level keys=%s",
-                            list(data.keys()) if isinstance(data, dict) else type(data),
-                        )
-
                     search_results: List[SearchResult] = []
-                    for c in citations[:num_results]:
-                        search_results.append(
-                            SearchResult(
-                                query_id=query_id,
-                                source=SearchSource.BING,
-                                title=c.get("title") or "",
-                                url=c["url"],
-                                snippet=(output_text or "")[:500],
-                            )
-                        )
 
-                    return search_results
+                    if hasattr(response, "output_items"):
+                        for item in response.output_items:
+                            if item.type == "message" and item.content:
+                                for content_block in item.content:
+                                    if content_block.type == "output_text" and hasattr(
+                                        content_block, "annotations"
+                                    ):
+                                        for annotation in content_block.annotations:
+                                            if annotation.type == "url_citation":
+                                                search_results.append(
+                                                    SearchResult(
+                                                        query_id=query_id,
+                                                        source=SearchSource.BING,
+                                                        title=annotation.title
+                                                        if hasattr(annotation, "title")
+                                                        else "",
+                                                        url=annotation.url,
+                                                        snippet=content_block.text[:500]
+                                                        if hasattr(content_block, "text")
+                                                        else "",
+                                                    )
+                                                )
+
+                    return search_results[:num_results]
                 finally:
                     try:
                         self.client.agents.delete_version(agent.name, agent.version)
-                    except Exception as cleanup_exc:
-                        logger.warning(
-                            "Failed to delete BingSearchAgent version %s for agent %s: %s",
-                            agent.version,
-                            agent.name,
-                            cleanup_exc,
-                            exc_info=True,
-                        )
+                    except Exception:
+                        pass
             except Exception as e:
-                logger.error("Bing Grounding Search error: %s", str(e), exc_info=True)
                 raise Exception(f"Bing Grounding Search error: {str(e)}") from e
 
         return await asyncio.to_thread(_run_sync)
