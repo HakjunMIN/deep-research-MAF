@@ -230,14 +230,9 @@ class ResearchWorkflow:
             return current
 
         history = cls._thread_histories.get(thread_id, [])
-        last_user: Optional[str] = None
-        for msg in reversed(history):
-            if msg.get("role") == "user" and (msg.get("content") or "").strip():
-                last_user = str(msg.get("content")).strip()
-                break
-
-        if not last_user:
+        if not history:
             return current
+        
         # Language-agnostic heuristic: treat as follow-up when the new input is
         # short and does not look like a standalone query, or when it barely
         # overlaps with the previous topic.
@@ -247,24 +242,51 @@ class ResearchWorkflow:
             return re.findall(r"\w+", text.lower())
 
         current_tokens = tokenize(current)
-        prev_tokens = tokenize(last_user)
-        overlap = set(current_tokens) & set(prev_tokens)
-        overlap_ratio = len(overlap) / max(1, len(current_tokens))
-
-        # Standalone if long enough, has many tokens, contains a question mark,
-        # or already overlaps heavily with the prior topic.
+        
+        # Standalone if long enough, has many tokens, or contains a question mark
         is_standalone = (
             len(current) >= 80
             or len(current_tokens) >= 10
             or "?" in current
-            or overlap_ratio >= 0.4
         )
 
         if is_standalone:
             return current
+        
+        # Collect recent user messages (last 5 turns) for context
+        recent_user_messages: List[str] = []
+        for msg in reversed(history):
+            if msg.get("role") == "user" and (msg.get("content") or "").strip():
+                recent_user_messages.insert(0, str(msg.get("content")).strip())
+                if len(recent_user_messages) >= 5:  # Limit to last 5 user messages
+                    break
+        
+        if not recent_user_messages:
+            return current
+        
+        # Check token overlap with recent context
+        all_prev_tokens = set()
+        for prev_msg in recent_user_messages:
+            all_prev_tokens.update(tokenize(prev_msg))
+        
+        overlap = set(current_tokens) & all_prev_tokens
+        overlap_ratio = len(overlap) / max(1, len(current_tokens))
+        
+        # If heavily overlaps with prior topics, it's already contextual enough
+        if overlap_ratio >= 0.4:
+            return current
 
-        # Otherwise, blend with previous user topic to make a self-contained query.
-        return f"{last_user}\n\n추가 요청: {current}"
+        # Otherwise, blend recent user context + current follow-up
+        # Build a compact context from recent messages
+        context_parts = []
+        for msg in recent_user_messages[-5:]:  # Last 5 user messages
+            if len(msg) < 100:  # Keep short messages as-is
+                context_parts.append(msg)
+            else:  # Truncate long messages
+                context_parts.append(msg[:100] + "...")
+        
+        context_str = " / ".join(context_parts)
+        return f"{context_str}\n\n추가 요청: {current}"
 
     @classmethod
     def _append_turn_to_history(cls, thread_id: str, user_message: str, assistant_message: str) -> None:

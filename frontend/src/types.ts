@@ -10,6 +10,7 @@ export interface Message {
     url: string;
     snippet: string;
   }>;
+  searchEvents?: SearchEvent[];  // Search events for this specific message
 }
 
 export interface SearchEvent {
