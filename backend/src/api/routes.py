@@ -50,6 +50,7 @@ class ResearchRequest(BaseModel):
 class ResearchResponse(BaseModel):
     """Response with complete research results from multi-agent conversation."""
     content: str = Field(..., description="Research question")
+    thread_id: str | None = Field(None, description="Thread ID for multi-turn conversation")
     answer: SynthesizedAnswer
     research_plan: dict | None
     search_results: List[SearchResult]
@@ -92,7 +93,8 @@ async def submit_research(request: ResearchRequest) -> ResearchResponse:
         result = await workflow.execute_query(
             query_content=request.content,
             search_sources=[str(src) for src in request.search_sources],
-            ws_callback=None
+            ws_callback=None,
+            thread_id=request.thread_id,
         )
         logger.info(f"Workflow completed successfully. Result keys: {list(result.keys())}")
         
@@ -162,6 +164,7 @@ async def submit_research(request: ResearchRequest) -> ResearchResponse:
         # Build response
         response = ResearchResponse(
             content=request.content,
+            thread_id=result.get("thread_id") or request.thread_id,
             answer=answer,
             research_plan=research_plan,
             search_results=search_results

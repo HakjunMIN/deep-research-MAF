@@ -231,31 +231,35 @@ class ResearchAgent(BaseCustomAgent):
                 if source == SearchSource.GOOGLE and self.google_enabled and self.google_service:
                     tool_name = "Google"
                     self.log_step(f"🔍 Google 검색: {search_query}")
-                    runner = lambda: self.google_service.search(query=search_query, query_id=query_id)
+                    def runner():
+                        return self.google_service.search(query=search_query, query_id=query_id)
                 elif source == SearchSource.ARXIV and self.arxiv_enabled and self.arxiv_service:
                     tool_name = "arXiv"
                     self.log_step(f"📚 arXiv 검색: {search_query}")
-                    runner = lambda: self.arxiv_service.search_with_keywords(
-                        query_id=query_id,
-                        keywords=step.keywords,
-                        max_results=5,
-                    )
+                    def runner():
+                        return self.arxiv_service.search_with_keywords(
+                            query_id=query_id,
+                            keywords=step.keywords,
+                            max_results=5,
+                        )
                 elif source == SearchSource.DUCKDUCKGO and self.duckduckgo_enabled and self.duckduckgo_service:
                     tool_name = "DuckDuckGo"
                     self.log_step(f"🦆 DuckDuckGo 검색: {search_query}")
-                    runner = lambda: self.duckduckgo_service.search_with_keywords(
-                        query_id=query_id,
-                        keywords=step.keywords,
-                        max_results=10,
-                    )
+                    def runner():
+                        return self.duckduckgo_service.search_with_keywords(
+                            query_id=query_id,
+                            keywords=step.keywords,
+                            max_results=10,
+                        )
                 elif source == SearchSource.BING and self.bing_enabled and self.bing_service:
                     tool_name = "Bing"
                     self.log_step(f"🔎 Bing 검색: {search_query}")
-                    runner = lambda: self.bing_service.search_with_keywords(
-                        query_id=query_id,
-                        keywords=step.keywords,
-                        max_results=10,
-                    )
+                    def runner():
+                        return self.bing_service.search_with_keywords(
+                            query_id=query_id,
+                            keywords=step.keywords,
+                            max_results=10,
+                        )
                 else:
                     return []
 

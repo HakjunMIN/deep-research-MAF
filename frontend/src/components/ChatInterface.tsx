@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { FormEvent } from 'react';
 import type { Message, SearchEvent } from '../types';
 import { streamResearch } from '../services/api';
@@ -10,7 +10,7 @@ export function ChatInterface() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
-  const [searchEvents, setSearchEvents] = useState<SearchEvent[]>([]);
+  const [currentSearchEvents, setCurrentSearchEvents] = useState<SearchEvent[]>([]);
   const [threadId, setThreadId] = useState<string | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -44,7 +44,7 @@ export function ChatInterface() {
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
-    setSearchEvents([]);  // Clear search events for new query
+    setCurrentSearchEvents([]);  // Clear current search events for new query
 
     const assistantMessageId = (Date.now() + 1).toString();
     let assistantContent = '';
@@ -98,7 +98,15 @@ export function ChatInterface() {
           case 'research_complete':
             setStatusMessage(`🔎 Found ${event.results_count || 0} results`);
             if (event.search_events) {
-              setSearchEvents(event.search_events);
+              setCurrentSearchEvents(event.search_events);
+              // Update the assistant message with search events
+              setMessages(prev => 
+                prev.map(msg => 
+                  msg.id === assistantMessageId
+                    ? { ...msg, searchEvents: event.search_events }
+                    : msg
+                )
+              );
             }
             break;
 
@@ -115,12 +123,24 @@ export function ChatInterface() {
                 results: event.results,
                 error: event.message,
               };
-              setSearchEvents(prev => {
+              setCurrentSearchEvents(prev => {
                 const idx = prev.findIndex(e => e.id === incoming.id);
-                if (idx === -1) return [...prev, incoming];
-                const next = [...prev];
-                next[idx] = { ...next[idx], ...incoming };
-                return next;
+                const updated = idx === -1 ? [...prev, incoming] : (() => {
+                  const next = [...prev];
+                  next[idx] = { ...next[idx], ...incoming };
+                  return next;
+                })();
+                
+                // Also update the message
+                setMessages(msgs => 
+                  msgs.map(msg => 
+                    msg.id === assistantMessageId
+                      ? { ...msg, searchEvents: updated }
+                      : msg
+                  )
+                );
+                
+                return updated;
               });
             }
             break;
@@ -213,7 +233,7 @@ export function ChatInterface() {
   const handleNewConversation = () => {
     setMessages([]);
     setThreadId(undefined);
-    setSearchEvents([]);
+    setCurrentSearchEvents([]);
     setStatusMessage('');
     setInput('');
   };
@@ -283,96 +303,174 @@ export function ChatInterface() {
             </div>
           ) : (
             <div className="flex flex-col gap-6">
-              {(() => {
-                const insertIdx = messages.findIndex(m => m.role === 'assistant');
-                const shouldRenderPanel = searchEvents.length > 0;
-                const shouldRenderStatus = Boolean(statusMessage);
+              {messages.map((message, idx) => {
+                const isLastMessage = idx === messages.length - 1;
+                const isAssistant = message.role === 'assistant';
+                const messageSearchEvents = message.searchEvents || [];
+                const showCurrentSearchEvents = isLastMessage && isAssistant && currentSearchEvents.length > 0;
+                const showMessageSearchEvents = isAssistant && messageSearchEvents.length > 0;
+                
+                return (
+                  <div key={message.id}>
+                    {/* Show search panel for this specific message */}
+                    {showMessageSearchEvents && !isLastMessage && (
+                      <div className="flex justify-start mb-6">
+                        <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-xl p-4 max-w-2xl shadow-sm">
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className="text-lg">🔍</span>
+                            <span className="font-semibold text-gray-800">검색 진행 상황</span>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            {messageSearchEvents.map((event, idx) => (
+                              <div key={event.id || idx} className="flex items-start gap-3 text-sm">
+                                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-white shadow flex items-center justify-center">
+                                  {event.tool === 'Google' && '🔍'}
+                                  {event.tool === 'arXiv' && '📚'}
+                                  {event.tool === 'DuckDuckGo' && '🦆'}
+                                  {event.tool === 'Bing' && '🔎'}
+                                </span>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-medium text-gray-700">{event.tool}</span>
+                                    {event.status === 'searching' && (
+                                      <span className="text-xs text-blue-600 animate-pulse">검색 중...</span>
+                                    )}
+                                    {event.status === 'completed' && (
+                                      <span className="text-xs text-green-600">✓ {event.results_count}개 결과</span>
+                                    )}
+                                    {event.status === 'failed' && (
+                                      <span className="text-xs text-red-600">✗ 실패</span>
+                                    )}
+                                  </div>
+                                  <div className="text-gray-500 text-xs mt-1">
+                                    <span className="bg-gray-100 px-2 py-0.5 rounded">{event.query}</span>
+                                  </div>
+                                  {event.keywords && event.keywords.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                      {event.keywords.slice(0, 5).map((kw, kidx) => (
+                                        <span key={kidx} className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                                          {kw}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
 
-                const StatusPanel = (
-                  <div className="flex justify-start">
-                    <StatusIndicator status={statusMessage} />
-                  </div>
-                );
-
-                const SearchPanel = (
-                  <div className="flex justify-start">
-                    <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-xl p-4 max-w-2xl shadow-sm">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="text-lg">🔍</span>
-                        <span className="font-semibold text-gray-800">검색 진행 상황</span>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        {searchEvents.map((event, idx) => (
-                          <div key={event.id || idx} className="flex items-start gap-3 text-sm">
-                            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-white shadow flex items-center justify-center">
-                              {event.tool === 'Google' && '🔍'}
-                              {event.tool === 'arXiv' && '📚'}
-                              {event.tool === 'DuckDuckGo' && '🦆'}
-                              {event.tool === 'Bing' && '🔎'}
-                            </span>
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium text-gray-700">{event.tool}</span>
-                                {event.status === 'searching' && (
-                                  <span className="text-xs text-blue-600 animate-pulse">검색 중...</span>
-                                )}
-                                {event.status === 'completed' && (
-                                  <span className="text-xs text-green-600">✓ {event.results_count}개 결과</span>
-                                )}
-                                {event.status === 'failed' && (
-                                  <span className="text-xs text-red-600">✗ 실패</span>
-                                )}
-                              </div>
-                              <div className="text-gray-500 text-xs mt-1">
-                                <span className="bg-gray-100 px-2 py-0.5 rounded">{event.query}</span>
-                              </div>
-                              {event.keywords && event.keywords.length > 0 && (
-                                <div className="flex flex-wrap gap-1 mt-1">
-                                  {event.keywords.slice(0, 5).map((kw, kidx) => (
-                                    <span key={kidx} className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
-                                      {kw}
-                                    </span>
-                                  ))}
+                                  {event.status === 'completed' && event.results && event.results.length > 0 && (
+                                    <div className="mt-2 space-y-1">
+                                      {event.results.slice(0, 3).map((r, ridx) => (
+                                        <div key={ridx} className="text-xs">
+                                          <a
+                                            href={r.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-blue-700 hover:underline"
+                                          >
+                                            {r.title || r.url}
+                                          </a>
+                                          {r.snippet && (
+                                            <div className="text-gray-500 mt-0.5 line-clamp-2">
+                                              {r.snippet}
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
-                              )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Show current search/status panels BEFORE last assistant message */}
+                    {showCurrentSearchEvents && (
+                      <>
+                        {currentSearchEvents.length > 0 && (
+                          <div className="flex justify-start mb-6">
+                            <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-xl p-4 max-w-2xl shadow-sm">
+                              <div className="flex items-center gap-2 mb-3">
+                                <span className="text-lg">🔍</span>
+                                <span className="font-semibold text-gray-800">검색 진행 상황</span>
+                              </div>
+                              <div className="flex flex-col gap-2">
+                                {currentSearchEvents.map((event, idx) => (
+                                  <div key={event.id || idx} className="flex items-start gap-3 text-sm">
+                                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-white shadow flex items-center justify-center">
+                                      {event.tool === 'Google' && '🔍'}
+                                      {event.tool === 'arXiv' && '📚'}
+                                      {event.tool === 'DuckDuckGo' && '🦆'}
+                                      {event.tool === 'Bing' && '🔎'}
+                                    </span>
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-medium text-gray-700">{event.tool}</span>
+                                        {event.status === 'searching' && (
+                                          <span className="text-xs text-blue-600 animate-pulse">검색 중...</span>
+                                        )}
+                                        {event.status === 'completed' && (
+                                          <span className="text-xs text-green-600">✓ {event.results_count}개 결과</span>
+                                        )}
+                                        {event.status === 'failed' && (
+                                          <span className="text-xs text-red-600">✗ 실패</span>
+                                        )}
+                                      </div>
+                                      <div className="text-gray-500 text-xs mt-1">
+                                        <span className="bg-gray-100 px-2 py-0.5 rounded">{event.query}</span>
+                                      </div>
+                                      {event.keywords && event.keywords.length > 0 && (
+                                        <div className="flex flex-wrap gap-1 mt-1">
+                                          {event.keywords.slice(0, 5).map((kw, kidx) => (
+                                            <span key={kidx} className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                                              {kw}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
 
-                              {event.status === 'completed' && event.results && event.results.length > 0 && (
-                                <div className="mt-2 space-y-1">
-                                  {event.results.slice(0, 3).map((r, ridx) => (
-                                    <div key={ridx} className="text-xs">
-                                      <a
-                                        href={r.url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="text-blue-700 hover:underline"
-                                      >
-                                        {r.title || r.url}
-                                      </a>
-                                      {r.snippet && (
-                                        <div className="text-gray-500 mt-0.5 line-clamp-2">
-                                          {r.snippet}
+                                      {event.status === 'completed' && event.results && event.results.length > 0 && (
+                                        <div className="mt-2 space-y-1">
+                                          {event.results.slice(0, 3).map((r, ridx) => (
+                                            <div key={ridx} className="text-xs">
+                                              <a
+                                                href={r.url}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="text-blue-700 hover:underline"
+                                              >
+                                                {r.title || r.url}
+                                              </a>
+                                              {r.snippet && (
+                                                <div className="text-gray-500 mt-0.5 line-clamp-2">
+                                                  {r.snippet}
+                                                </div>
+                                              )}
+                                            </div>
+                                          ))}
                                         </div>
                                       )}
                                     </div>
-                                  ))}
-                                </div>
-                              )}
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                        )}
+
+                        {statusMessage && (
+                          <div className="flex justify-start mb-6">
+                            <StatusIndicator status={statusMessage} />
+                          </div>
+                        )}
+                      </>
+                    )}
+                    
+                    <MessageBubble message={message} />
                   </div>
                 );
-
-                return messages.map((message, idx) => (
-                  <Fragment key={message.id}>
-                    {shouldRenderPanel && idx === (insertIdx === -1 ? 0 : insertIdx) && SearchPanel}
-                    {shouldRenderStatus && idx === (insertIdx === -1 ? 0 : insertIdx) && StatusPanel}
-                    <MessageBubble message={message} />
-                  </Fragment>
-                ));
-              })()}
+              })}
+              
               <div ref={messagesEndRef} />
             </div>
           )}

@@ -91,6 +91,16 @@ class ResearchWorkflow:
     
     # Thread storage for multi-turn conversations
     _thread_store: Dict[str, AgentThread] = {}
+
+    # Lightweight in-process message history per thread.
+    # We intentionally keep this separate from AgentThread because our agents
+    # don't rely on AgentThread message stores; instead we replay history as
+    # prompt context for subsequent turns.
+    _thread_histories: Dict[str, List[Dict[str, str]]] = {}
+
+    # History limits to keep prompts bounded
+    _max_history_messages: int = 12  # last N messages (user+assistant)
+    _max_history_chars: int = 8000
     
     def __init__(
         self,
@@ -142,14 +152,147 @@ class ResearchWorkflow:
         """
         if thread_id and thread_id in self._thread_store:
             logger.info(f"Resuming existing thread: {thread_id}")
+            self._thread_histories.setdefault(thread_id, [])
             return thread_id, self._thread_store[thread_id]
         
         # Create new thread
         new_thread_id = thread_id or str(uuid.uuid4())
         new_thread = AgentThread()
         self._thread_store[new_thread_id] = new_thread
+        self._thread_histories.setdefault(new_thread_id, [])
         logger.info(f"Created new thread: {new_thread_id}")
         return new_thread_id, new_thread
+
+    @classmethod
+    def _build_task_with_history(cls, thread_id: str, user_message: str) -> str:
+        """Compose the task prompt with prior conversation for multi-turn chat."""
+        history = cls._thread_histories.get(thread_id, [])
+        if not history:
+            return user_message
+
+        # Take last N messages and enforce a character budget.
+        selected = history[-cls._max_history_messages :]
+        rendered_lines: List[str] = [
+            "You are continuing an ongoing conversation.",
+            "Use the prior context to answer the NEW user message.",
+            "If prior context is insufficient, ask a clarifying question.",
+            "",
+            "Conversation so far:",
+        ]
+
+        for msg in selected:
+            role = msg.get("role", "user")
+            label = "User" if role == "user" else "Assistant"
+            content = (msg.get("content") or "").strip()
+            if content:
+                rendered_lines.append(f"{label}: {content}")
+
+        rendered_lines.extend(["", "New user message:", user_message.strip()])
+        rendered = "\n".join(rendered_lines)
+
+        if len(rendered) <= cls._max_history_chars:
+            return rendered
+
+        # If over budget, trim oldest messages until it fits.
+        trimmed = selected[:]
+        while trimmed and len(rendered) > cls._max_history_chars:
+            trimmed.pop(0)
+            rendered_lines = [
+                "You are continuing an ongoing conversation.",
+                "Use the prior context to answer the NEW user message.",
+                "If prior context is insufficient, ask a clarifying question.",
+                "",
+                "Conversation so far:",
+            ]
+            for msg in trimmed:
+                role = msg.get("role", "user")
+                label = "User" if role == "user" else "Assistant"
+                content = (msg.get("content") or "").strip()
+                if content:
+                    rendered_lines.append(f"{label}: {content}")
+            rendered_lines.extend(["", "New user message:", user_message.strip()])
+            rendered = "\n".join(rendered_lines)
+
+        return rendered
+
+    @classmethod
+    def _build_effective_query(cls, thread_id: str, user_message: str) -> str:
+        """Build a standalone query for search/planning agents.
+
+        Our agents currently rely on shared_state['query'].content for keyword
+        generation, search queries, and answer synthesis. The GroupChat task
+        string may include conversation framing, which is not ideal for web
+        search. This function keeps the query clean while still being multi-turn.
+        """
+
+        current = (user_message or "").strip()
+        if not current:
+            return current
+
+        history = cls._thread_histories.get(thread_id, [])
+        if not history:
+            return current
+        
+        # Language-agnostic heuristic: treat as follow-up when the new input is
+        # short and does not look like a standalone query, or when it barely
+        # overlaps with the previous topic.
+        import re
+
+        def tokenize(text: str) -> list[str]:
+            return re.findall(r"\w+", text.lower())
+
+        current_tokens = tokenize(current)
+        
+        # Standalone if long enough, has many tokens, or contains a question mark
+        is_standalone = (
+            len(current) >= 80
+            or len(current_tokens) >= 10
+            or "?" in current
+        )
+
+        if is_standalone:
+            return current
+        
+        # Collect recent user messages (last 5 turns) for context
+        recent_user_messages: List[str] = []
+        for msg in reversed(history):
+            if msg.get("role") == "user" and (msg.get("content") or "").strip():
+                recent_user_messages.insert(0, str(msg.get("content")).strip())
+                if len(recent_user_messages) >= 5:  # Limit to last 5 user messages
+                    break
+        
+        if not recent_user_messages:
+            return current
+        
+        # Check token overlap with recent context
+        all_prev_tokens = set()
+        for prev_msg in recent_user_messages:
+            all_prev_tokens.update(tokenize(prev_msg))
+        
+        overlap = set(current_tokens) & all_prev_tokens
+        overlap_ratio = len(overlap) / max(1, len(current_tokens))
+        
+        # If heavily overlaps with prior topics, it's already contextual enough
+        if overlap_ratio >= 0.4:
+            return current
+
+        # Otherwise, blend recent user context + current follow-up
+        # Build a compact context from recent messages
+        context_parts = []
+        for msg in recent_user_messages[-5:]:  # Last 5 user messages
+            if len(msg) < 100:  # Keep short messages as-is
+                context_parts.append(msg)
+            else:  # Truncate long messages
+                context_parts.append(msg[:100] + "...")
+        
+        context_str = " / ".join(context_parts)
+        return f"{context_str}\n\n추가 요청: {current}"
+
+    @classmethod
+    def _append_turn_to_history(cls, thread_id: str, user_message: str, assistant_message: str) -> None:
+        cls._thread_histories.setdefault(thread_id, [])
+        cls._thread_histories[thread_id].append({"role": "user", "content": user_message})
+        cls._thread_histories[thread_id].append({"role": "assistant", "content": assistant_message})
     
     def serialize_thread(self, thread_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -167,7 +310,8 @@ class ResearchWorkflow:
         thread = self._thread_store[thread_id]
         return {
             "thread_id": thread_id,
-            "state": thread.serialize() if hasattr(thread, 'serialize') else {}
+            "state": thread.serialize() if hasattr(thread, 'serialize') else {},
+            "history": self._thread_histories.get(thread_id, []),
         }
     
     @classmethod
@@ -192,6 +336,19 @@ class ResearchWorkflow:
             thread = AgentThread()
         
         cls._thread_store[thread_id] = thread
+        # Restore lightweight history if present
+        history = data.get("history")
+        if isinstance(history, list):
+            cls._thread_histories[thread_id] = [
+                {
+                    "role": str(m.get("role", "user")),
+                    "content": str(m.get("content", "")),
+                }
+                for m in history
+                if isinstance(m, dict)
+            ]
+        else:
+            cls._thread_histories.setdefault(thread_id, [])
         return thread_id, thread
     
     def list_threads(self) -> List[str]:
@@ -210,6 +367,7 @@ class ResearchWorkflow:
         """
         if thread_id in self._thread_store:
             del self._thread_store[thread_id]
+            self._thread_histories.pop(thread_id, None)
             return True
         return False
     
@@ -233,6 +391,12 @@ class ResearchWorkflow:
         try:
             # Get or create thread for this conversation
             current_thread_id, thread = self.get_or_create_thread(thread_id)
+
+            # Build the task prompt with conversation history (multi-turn)
+            task_with_history = self._build_task_with_history(current_thread_id, query_content)
+
+            # Build a clean standalone query for agents/search
+            effective_query_content = self._build_effective_query(current_thread_id, query_content)
             
             # Prepare query
             from ..models.query import ResearchQuery
@@ -254,7 +418,7 @@ class ResearchWorkflow:
                 source_enums = [SearchSource.ARXIV]
             
             query = ResearchQuery(
-                content=query_content,
+                content=effective_query_content,
                 search_sources=source_enums
             )
             
@@ -289,7 +453,7 @@ class ResearchWorkflow:
             async def _run_group_chat() -> None:
                 nonlocal current_agent_idx
 
-                async for event in self.workflow.run_stream(query_content):
+                async for event in self.workflow.run_stream(task_with_history):
                     event_type = type(event).__name__
 
                     # Agent started thinking
@@ -383,6 +547,12 @@ class ResearchWorkflow:
                     "search_results": [r.model_dump(mode='json') if hasattr(r, 'model_dump') else r for r in self._shared_state.get("search_results", [])],
                     "thread_id": current_thread_id
                 }
+
+                # Persist this turn for subsequent multi-turn prompts
+                try:
+                    self._append_turn_to_history(current_thread_id, query_content, content)
+                except Exception:
+                    logger.exception("Failed to append turn to history")
             
             # Send completion event with thread_id
             yield {
@@ -401,7 +571,8 @@ class ResearchWorkflow:
         self,
         query_content: str,
         search_sources: List[str],
-        ws_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        ws_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        thread_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute the complete research workflow for a query.
@@ -419,8 +590,13 @@ class ResearchWorkflow:
             self.websocket_callback = ws_callback
         
         try:
+            current_thread_id, _thread = self.get_or_create_thread(thread_id)
+
             # Prepare task for workflow
-            task = query_content
+            task = self._build_task_with_history(current_thread_id, query_content)
+
+            # Build a clean standalone query for agents/search
+            effective_query_content = self._build_effective_query(current_thread_id, query_content)
             
             # Create initial state for the workflow
             from ..models.query import ResearchQuery
@@ -446,7 +622,7 @@ class ResearchWorkflow:
                 source_enums = [SearchSource.ARXIV]  # Default fallback
             
             query = ResearchQuery(
-                content=query_content,
+                content=effective_query_content,
                 search_sources=source_enums
             )
             
@@ -456,6 +632,7 @@ class ResearchWorkflow:
             self._shared_state.clear()
             self._shared_state["query"] = query
             self._shared_state["search_sources"] = source_enums
+            self._shared_state["thread_id"] = current_thread_id
             
             # Store results from each agent (keys must match AgentId enum values)
             results = {
@@ -588,6 +765,16 @@ class ResearchWorkflow:
             logger.info(f"Extracted results from shared_state: {[(k, v is not None) for k, v in final_results.items()]}")
             
             # Return results
+            # Persist history if we have an answer
+            synthesized_answer = self._shared_state.get("synthesized_answer")
+            if synthesized_answer:
+                content = synthesized_answer.content if hasattr(synthesized_answer, "content") else str(synthesized_answer)
+                try:
+                    self._append_turn_to_history(current_thread_id, query_content, content)
+                except Exception:
+                    logger.exception("Failed to append turn to history")
+
+            final_results["thread_id"] = current_thread_id
             return final_results
         
         except Exception as e:
