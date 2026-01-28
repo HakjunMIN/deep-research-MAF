@@ -1,26 +1,26 @@
 # Deep Research Agent
 
-Microsoft Agent Framework 기반의 AI 리서치 에이전트 시스템으로, 복잡한 질문에 대한 심층 조사를 수행합니다.
+An AI research agent system based on the Microsoft Agent Framework that conducts in-depth investigation into complex questions.
 
 >[!NOTE]
-> ag-ui 프로토콜을 사용한 코드는 [feature/ag-ui](https://github.com/HakjunMIN/deep-research-MAF/tree/feature/ag-ui)
+> Code using the ag-ui protocol can be found in [feature/ag-ui](https://github.com/HakjunMIN/deep-research-MAF/tree/feature/ag-ui)
 
-## 주요 기능
+## Key Features
 
-- **Multi-Agent 협업**: Planning, Research, Content, Reflect 에이전트가 협력하여 연구 수행
-- **실시간 스트리밍**: 에이전트 진행 상황을 실시간으로 확인
-- **다양한 검색 소스**: Google Search, arXiv 논문 검색 지원
-- **Azure OpenAI 통합**: GPT-4 기반 추론 및 분석
+- **Multi-Agent Collaboration**: Planning, Research, Content, and Reflect agents work together to conduct research
+- **Real-time Streaming**: Monitor agent progress in real-time
+- **Various Search Sources**: Supports Google Search and arXiv paper search
+- **Azure OpenAI Integration**: GPT-4-based reasoning and analysis
 
-## 기술 스택
+## Tech Stack
 
 - **Backend**: Python 3.12+, FastAPI, Microsoft Agent Framework
 - **Frontend**: React 18+, TypeScript, Vite, Tailwind CSS
 - **AI**: Azure OpenAI (GPT-4)
 
-## 시작하기
+## Getting Started
 
-### Backend 실행
+### Running the Backend
 
 ```bash
 cd backend
@@ -28,9 +28,9 @@ uv sync
 uv run python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-서버는 `http://localhost:8000`에서 실행됩니다.
+The server runs at `http://localhost:8000`.
 
-### Frontend 실행
+### Running the Frontend
 
 ```bash
 cd frontend
@@ -38,25 +38,25 @@ npm install
 npm run dev
 ```
 
-프론트엔드는 `http://localhost:5173`에서 실행됩니다.
+The frontend runs at `http://localhost:5173`.
 
-## 환경 변수
+## Environment Variables
 
-다음 환경 변수를 설정해야 합니다:
+Set the following environment variables:
 
-- `AZURE_OPENAI_API_KEY`: Azure OpenAI API 키
-- `AZURE_OPENAI_ENDPOINT`: Azure OpenAI 엔드포인트
-- `AZURE_OPENAI_DEPLOYMENT`: 배포 이름 (예: gpt-4)
-- `GOOGLE_API_KEY`: Google Search API 키
+- `AZURE_OPENAI_API_KEY`: Azure OpenAI API key
+- `AZURE_OPENAI_ENDPOINT`: Azure OpenAI endpoint
+- `AZURE_OPENAI_DEPLOYMENT`: Deployment name (e.g., gpt-4)
+- `GOOGLE_API_KEY`: Google Search API key
 - `GOOGLE_CSE_ID`: Google Custom Search Engine ID
 
-## 사용 방법
+## Usage
 
-1. 프론트엔드에서 연구하고 싶은 질문 입력
-2. 에이전트들이 협력하여 연구 계획 수립
-3. 실시간으로 검색 및 분석 과정 확인
-4. 종합된 연구 결과 확인
+1. Enter a research question in the frontend
+2. Agents collaborate to develop a research plan
+3. Track real-time searching and analysis progress
+4. Review comprehensive research results
 
-## 라이선스
+## License
 
 MIT
