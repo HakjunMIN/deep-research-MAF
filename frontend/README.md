@@ -71,3 +71,33 @@ export default defineConfig([
   },
 ])
 ```
+
+
+---
+
+# Frontend Test Coverage and Execution
+
+This frontend uses **Vitest**, **React Testing Library**, and **MSW** to provide comprehensive test coverage.
+
+### Running Tests
+
+To execute all frontend tests and generate coverage report:
+
+```bash
+cd frontend
+npm run test -- --coverage
+```
+
+### Frameworks Used
+
+- **Vitest**: Fast unit testing framework compatible with Vite
+- **React Testing Library**: For React component testing
+- **MSW (Mock Service Worker)**: For API service layer mocking
+
+### Coverage Target
+
+Minimum code coverage is **70%**.
+
+### CI/CD Integration
+
+Tests are executed automatically as part of the CI pipeline. Ensure all tests pass before merging PRs.

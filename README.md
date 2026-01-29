@@ -60,3 +60,29 @@ npm run dev
 ## 라이선스
 
 MIT
+
+
+## 테스트 문서
+
+이 프로젝트는 백엔드와 프론트엔드에 대한 포괄적인 단위 테스트 커버리지를 지원합니다.
+
+### Backend Testing
+- 프레임워크: **pytest**, **pytest-asyncio**, **pytest-mock**
+- 커버리지 명령어:
+  ```bash
+  cd backend
+  uv run pytest --cov=src --cov-report=term-missing
+  ```
+- 최소 코드 커버리지: **70%**
+
+### Frontend Testing
+- 프레임워크: **Vitest**, **React Testing Library**, **MSW**
+- 테스트 실행 명령어:
+  ```bash
+  cd frontend
+  npm run test -- --coverage
+  ```
+- 최소 코드 커버리지: **70%**
+
+### CI/CD 통합
+테스트는 CI/CD 파이프라인에서 자동으로 실행되며, PR 병합 전 모든 테스트가 통과해야 합니다.
