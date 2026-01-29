@@ -12,13 +12,13 @@ Microsoft Agent Framework 기반의 AI 리서치 에이전트 시스템으로, �
 - **다양한 검색 소스**: Google Search, arXiv 논문 검색 지원
 - **Azure OpenAI 통합**: GPT-4 기반 추론 및 분석
 
-## 기술 스택
+#기술 스택
 
 - **Backend**: Python 3.12+, FastAPI, Microsoft Agent Framework
 - **Frontend**: React 18+, TypeScript, Vite, Tailwind CSS
 - **AI**: Azure OpenAI (GPT-4)
 
-## 시작하기
+# 시작하기
 
 ### Backend 실행
 
