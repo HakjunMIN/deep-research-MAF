@@ -18,6 +18,7 @@ import os
 from abc import abstractmethod
 from typing import Any, Callable, Dict, List, Optional
 
+from azure.identity import DefaultAzureCredential
 from agent_framework import ChatAgent, AgentRunContext
 from agent_framework.azure import AzureOpenAIChatClient
 
@@ -31,7 +32,7 @@ def create_azure_chat_client() -> AzureOpenAIChatClient:
     return AzureOpenAIChatClient(
         endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
         deployment_name=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
-        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        credential=DefaultAzureCredential(),
         api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
     )
 

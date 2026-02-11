@@ -4,6 +4,7 @@ import asyncio
 import os
 from typing import Any, Dict, List, Optional
 
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AzureOpenAI
 try:
     from openai import AsyncAzureOpenAI
@@ -17,52 +18,57 @@ class AzureOpenAIService:
     Service for interacting with Azure OpenAI API.
     
     Configured via environment variables:
-    - AZURE_OPENAI_API_KEY: Azure OpenAI API key
     - AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
     - AZURE_OPENAI_DEPLOYMENT_NAME: Deployment name (e.g., gpt-4)
     - AZURE_OPENAI_API_VERSION: API version (default: 2024-02-15-preview)
+    
+    Uses DefaultAzureCredential for authentication.
     """
     
     def __init__(
         self,
-        api_key: Optional[str] = None,
         endpoint: Optional[str] = None,
         deployment_name: Optional[str] = None,
-        api_version: Optional[str] = None
+        api_version: Optional[str] = None,
+        credential: Optional[DefaultAzureCredential] = None
     ):
         """
         Initialize Azure OpenAI client.
         
         Args:
-            api_key: Azure OpenAI API key (defaults to AZURE_OPENAI_API_KEY env var)
             endpoint: Azure OpenAI endpoint (defaults to AZURE_OPENAI_ENDPOINT env var)
             deployment_name: Deployment name (defaults to AZURE_OPENAI_DEPLOYMENT_NAME env var)
             api_version: API version (defaults to AZURE_OPENAI_API_VERSION or 2024-02-15-preview)
+            credential: Azure credential (defaults to DefaultAzureCredential)
         """
-        self.api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
         self.endpoint = endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         self.deployment_name = deployment_name or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
         self.api_version = api_version or os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
+        self.credential = credential or DefaultAzureCredential()
         
-        if not self.api_key:
-            raise ValueError("Azure OpenAI API key is required")
         if not self.endpoint:
             raise ValueError("Azure OpenAI endpoint is required")
         if not self.deployment_name:
             raise ValueError("Azure OpenAI deployment name is required")
+
+        # Create token provider for Azure AD authentication
+        self.token_provider = get_bearer_token_provider(
+            self.credential,
+            "https://cognitiveservices.azure.com/.default"
+        )
 
         self._async_client = None
         self._sync_client = None
 
         if AsyncAzureOpenAI is not None:
             self._async_client = AsyncAzureOpenAI(
-                api_key=self.api_key,
+                azure_ad_token_provider=self.token_provider,
                 api_version=self.api_version,
                 azure_endpoint=self.endpoint,
             )
         else:
             self._sync_client = AzureOpenAI(
-                api_key=self.api_key,
+                azure_ad_token_provider=self.token_provider,
                 api_version=self.api_version,
                 azure_endpoint=self.endpoint,
             )
@@ -99,7 +105,7 @@ class AzureOpenAIService:
         # Fallback: sync client executed in a thread to avoid blocking the event loop
         if self._sync_client is None:
             self._sync_client = AzureOpenAI(
-                api_key=self.api_key,
+                azure_ad_token_provider=self.token_provider,
                 api_version=self.api_version,
                 azure_endpoint=self.endpoint,
             )

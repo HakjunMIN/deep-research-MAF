@@ -44,11 +44,19 @@ npm run dev
 
 다음 환경 변수를 설정해야 합니다:
 
-- `AZURE_OPENAI_API_KEY`: Azure OpenAI API 키
+### Azure OpenAI (DefaultAzureCredential 인증 사용)
 - `AZURE_OPENAI_ENDPOINT`: Azure OpenAI 엔드포인트
-- `AZURE_OPENAI_DEPLOYMENT`: 배포 이름 (예: gpt-4)
+- `AZURE_OPENAI_DEPLOYMENT_NAME`: 배포 이름 (예: gpt-4)
+- `AZURE_OPENAI_API_VERSION`: API 버전 (기본값: 2024-02-15-preview)
+
+> [!IMPORTANT]
+> Azure OpenAI 인증은 **DefaultAzureCredential**을 사용합니다.
+> - 로컬 개발: `az login` 명령으로 Azure CLI 로그인 필요
+> - 프로덕션: Managed Identity 또는 Service Principal 사용
+
+### Google Search (선택사항)
 - `GOOGLE_API_KEY`: Google Search API 키
-- `GOOGLE_CSE_ID`: Google Custom Search Engine ID
+- `GOOGLE_SEARCH_ENGINE_ID`: Google Custom Search Engine ID
 
 ## 사용 방법
 

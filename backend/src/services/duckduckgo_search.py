@@ -53,6 +53,7 @@ class DuckDuckGoSearchService:
                 results = self.ddgs.text(
                     query,
                     max_results=min(num_results, 10),
+                    backend="google,bing,brave,mojeek,duckduckgo,wikipedia",
                 )
 
                 search_results: List[SearchResult] = []
